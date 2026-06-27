@@ -6,9 +6,9 @@ browser needed — so they regenerate deterministically anywhere:
 
     python demos/generate_demos.py
 
-Outputs:
-    docs/assets/demo-terminal.gif   the four `vetosh` commands + output
-    docs/assets/demo-frontend.gif   the chat UI answering a question
+Output:
+    docs/assets/demo.gif   the four `vetosh` commands + output, then the chat UI
+                           answering a question (two scenes, one GIF)
 
 Requires Pillow (``pip install pillow``).
 """
@@ -126,7 +126,7 @@ def _draw_terminal(lines, typing) -> Image.Image:
     return img
 
 
-def render_terminal_gif() -> None:
+def build_terminal() -> tuple[list[Image.Image], list[int]]:
     frames: list[Image.Image] = []
     durs: list[int] = []
     printed: list[tuple] = []
@@ -154,8 +154,8 @@ def render_terminal_gif() -> None:
             durs.append(150)
 
     frames.append(_draw_terminal(printed, None))
-    durs.append(2600)  # final hold
-    save_gif(ASSETS / "demo-terminal.gif", frames, durs, colors=48)
+    durs.append(1500)  # hold before switching to the UI scene
+    return frames, durs
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ def _draw_frontend(composer_text, show_user, typing, answer_chars, show_sources)
     return img
 
 
-def render_frontend_gif() -> None:
+def build_frontend() -> tuple[list[Image.Image], list[int]]:
     frames: list[Image.Image] = []
     durs: list[int] = []
 
@@ -293,9 +293,32 @@ def render_frontend_gif() -> None:
     # 4) show sources + hold
     add(_draw_frontend("", True, None, len(ANSWER), True), 3000)
 
-    save_gif(ASSETS / "demo-frontend.gif", frames, durs)
+    return frames, durs
+
+
+# ---------------------------------------------------------------------------
+# Combined demo (terminal scene -> chat UI scene, one GIF)
+# ---------------------------------------------------------------------------
+
+C_W, C_H = 920, 600
+
+
+def _onto_canvas(img: Image.Image, bg: tuple[int, int, int]) -> Image.Image:
+    canvas = Image.new("RGB", (C_W, C_H), bg)
+    canvas.paste(img, ((C_W - img.width) // 2, (C_H - img.height) // 2))
+    return canvas
+
+
+def render_combined_gif() -> None:
+    t_frames, t_durs = build_terminal()
+    f_frames, f_durs = build_frontend()
+
+    frames = [_onto_canvas(f, T_BG) for f in t_frames]
+    frames += [_onto_canvas(f, F_BG) for f in f_frames]
+    durs = t_durs + f_durs
+
+    save_gif(ASSETS / "demo.gif", frames, durs, colors=96)
 
 
 if __name__ == "__main__":
-    render_terminal_gif()
-    render_frontend_gif()
+    render_combined_gif()

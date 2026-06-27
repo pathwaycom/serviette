@@ -8,14 +8,9 @@ writing any code. Point vetosh at a folder, pick a vector database and an
 embedder in a YAML file, and run a few commands.
 
 <p align="center">
-  <img src="docs/assets/demo-terminal.gif" alt="vetosh CLI walkthrough" width="100%">
+  <img src="docs/assets/demo.gif" alt="vetosh: CLI walkthrough then the web chat UI" width="100%">
 </p>
-<p align="center"><em>From zero to a live RAG stack: <code>quickstart → indexer → server → frontend</code>.</em></p>
-
-<p align="center">
-  <img src="docs/assets/demo-frontend.gif" alt="vetosh web chat UI" width="660">
-</p>
-<p align="center"><em>The built-in web chat UI (<code>vetosh frontend</code>) — answers grounded in your documents, with sources.</em></p>
+<p align="center"><em>From zero to a live RAG stack — <code>quickstart → indexer → server → frontend</code> — then chat with your documents.</em></p>
 
 ```bash
 pip install "vetosh[openai]"
