@@ -53,7 +53,7 @@ def _config(tmp_path: Path, docs: Path, uri: str) -> dict:
 def _driver(args: list[str], cache_dir: Path, attempts: int = 4) -> object:
     """Invoke the Milvus driver subprocess, retrying the known Lite startup flake."""
 
-    env = {**os.environ, "VETOSH_CACHE_DIR": str(cache_dir)}
+    env = dict(os.environ)
     last = ""
     for _ in range(attempts):
         proc = subprocess.run(

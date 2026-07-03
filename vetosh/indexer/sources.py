@@ -53,6 +53,7 @@ def read_source(src, name: str) -> pw.Table:
             format="only_metadata",
             mode=src.mode,
             object_pattern=src.glob,
+            max_backlog_size=src.max_backlog_size,
             name=name,
         )
     if src.type == "gdrive":
@@ -62,6 +63,7 @@ def read_source(src, name: str) -> pw.Table:
             mode=src.mode,
             service_user_credentials_file=src.service_user_credentials_file,
             file_name_pattern=src.file_name_pattern,
+            max_backlog_size=src.max_backlog_size,
             name=name,
         )
     if src.type == "s3":
@@ -77,9 +79,11 @@ def read_source(src, name: str) -> pw.Table:
                 with_path_style=src.with_path_style,
             ),
             mode=src.mode,
+            max_backlog_size=src.max_backlog_size,
             name=name,
         )
     if src.type == "sharepoint":
+        # NOTE: the SharePoint xpack connector has no max_backlog_size (yet).
         # Requires a Pathway Scale license; the connector polls the site every
         # refresh_interval seconds and emits native additions/retractions.
         from pathway.xpacks.connectors import sharepoint

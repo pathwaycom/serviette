@@ -56,14 +56,14 @@ Then run the two components (in separate terminals or on separate machines):
 
 ```bash
 # One command: indexer + server supervised together (dev/demo convenience)
-vetosh up --config config.yaml         # open http://localhost:8000
+vetosh up --config config.yaml         # open http://localhost:8989
 
 # ... or run the components separately (how production deploys them):
 # 1. Index your documents into the vector DB and keep it live
 vetosh indexer --config config.yaml
 
 # 2. Serve the chat UI + retrieval / RAG API on one port
-vetosh server --config config.yaml     # open http://localhost:8000
+vetosh server --config config.yaml     # open http://localhost:8989
 
 # (optional, split deployments only) standalone UI tier on another host
 vetosh frontend --config config.yaml   # open http://localhost:3000
@@ -73,7 +73,7 @@ Query the API (versioned under `/api/v1`; the pre-versioning `/retrieve`,
 `/rag` and `/health` paths still work as deprecated aliases):
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/retrieve \
+curl -X POST http://localhost:8989/api/v1/retrieve \
   -H 'Content-Type: application/json' \
   -d '{"query": "how does persistence work?", "k": 5}'
 ```
@@ -89,7 +89,7 @@ curl -X POST http://localhost:8000/api/v1/retrieve \
 If you configured an `llm` section, the `/rag` endpoint also answers questions:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/rag \
+curl -X POST http://localhost:8989/api/v1/rag \
   -H 'Content-Type: application/json' \
   -d '{"query": "summarize the onboarding guide", "k": 5}'
 ```
@@ -135,6 +135,7 @@ hardcoded.
 | `sources` | list | — (required) | indexer | One or more sources to index (mixed types allowed). |
 | `sources[].type` | `fs`\|`gdrive` | `fs` | indexer | Source type — see [Sources](#sources) below. |
 | `sources[].mode` | `streaming`\|`static` | `streaming` | indexer | `streaming` watches continuously; `static` indexes once and exits. |
+| `sources[].max_backlog_size` | int\|null | `1000` | indexer | **Advanced.** Backpressure bound on in-flight entries per connector (fs/gdrive/s3). Keeps memory flat during bulk backfills; the default suits virtually everyone — not offered by the wizard, edit the YAML to change. `null` disables. |
 | **fs** `sources[].path` | str | — (required) | indexer | Directory to watch. |
 | **fs** `sources[].glob` | str | `**/*` | indexer | Glob of files to include. |
 | **gdrive** `sources[].object_id` | str | — (required) | indexer | Drive folder or file id (folders scanned recursively). |
@@ -185,14 +186,14 @@ hardcoded.
 | `splitter.chunk_overlap` | int | `50` | indexer | Overlap (used by `recursive`). |
 | `persistence.enabled` | bool | `true` | indexer | See [Persistence](#5-persistence). |
 | `persistence.backend` | `filesystem` | `filesystem` | indexer | Persistence backend. |
-| `persistence.path` | str | `/var/vetosh/persistence` | indexer | Persistence directory. |
-| `server.host` / `server.port` | str / int | `0.0.0.0` / `8000` | server | Bind address. |
+| `persistence.path` | str | `./persistence` | indexer | Persistence directory (also hosts the parse cache under `runtime_calls/`). Silent default — the wizard does not ask. |
+| `server.host` / `server.port` | str / int | `0.0.0.0` / `8989` | server | Bind address. |
 | `server.serve_frontend` | bool | `true` | server | Serve the chat UI on `/` from the same port (API stays under `/api/v1`). |
 | `llm.type` | str | `openai` | server | LLM for `/rag` (omit to disable `/rag`). |
 | `llm.model` | str | `gpt-4o-mini` | server | Chat model. |
 | `llm.api_key` | str | — | server | API key (or `${ENV}`). |
 | `frontend.host` / `frontend.port` | str / int | `0.0.0.0` / `3000` | frontend (standalone) | Bind address for the split-deployment chat UI. |
-| `frontend.api_url` | str | `http://localhost:8000` | frontend (standalone) | Base URL of the API the standalone frontend proxies to. |
+| `frontend.api_url` | str | `http://localhost:8989` | frontend (standalone) | Base URL of the API the standalone frontend proxies to. |
 | `frontend.title` | str | `vetosh` | both | Title shown in the chat UI (embedded and standalone). |
 
 **Supported embedders** (from `pathway.xpacks.llm.embedders`): `openai`,
@@ -250,11 +251,14 @@ No external service and no setup: the file and table are created automatically
 columns and queried **inside DuckDB** with `list_cosine_similarity` — a
 vectorized, columnar scan that answers in milliseconds for local corpora.
 
-One caveat: DuckDB allows one read-write process *or* several read-only
-processes per file — never both. A **streaming** indexer holds the file
-read-write for its lifetime, so run DuckDB setups with `mode: static` sources
-(index once, exit, then serve — re-run to refresh), or pick a client-server
-backend for concurrent live indexing and serving.
+Concurrency: DuckDB allows one read-write process *or* several read-only
+processes per file — never both. vetosh resolves this with Pathway's
+`detach_between_batches`: the streaming indexer releases the file lock
+between minibatches, and the server's short-lived read-only connections (with
+a retry through brief lock windows) query it concurrently — live indexing and
+serving work on one file. On older Pathway builds without the flag, vetosh
+warns and falls back to the hold-the-lock behavior (use `mode: static`
+there).
 
 #### pgvector table
 
@@ -333,9 +337,11 @@ the last run, so:
 - **documents removed while the indexer was down are correctly retracted** from
   the vector DB on the next run.
 
-This is independent of vetosh's separate, persistent *parse cache* (see
-[Architecture](#7-architecture)), which keeps extracted document text warm across
-restarts and is evicted when a document is removed so it stays bounded.
+The same persistence directory also hosts the **parse cache**
+(`runtime_calls/`, via `pw.udfs.DefaultCache` — diskcache, LRU-bounded by
+`indexer.parse_cache_size_gb`, default 8): extracted document text stays warm
+across restarts, so unchanged documents are neither re-downloaded nor
+re-parsed. Disabling persistence also disables the parse cache.
 
 Disabling persistence still produces identical vectors for a given set of files;
 it only forgoes the cross-restart diffing and caching.
@@ -378,9 +384,9 @@ Unsupported files are skipped (they simply produce no chunks).
   ┌───────────┐──┼──▶│ paths + metadata │──▶│ extract   │──▶│  chunk   │──▶│ vectors  │──┐ │
   └───────────┘  │   │ (no file bytes)  │   │ text      │   │          │   │          │  │ │
                  │   └──────────────────┘   └─────┬─────┘   └──────────┘   └──────────┘  │ │
-                 │                                │ persistent parse cache                │ │
-                 │                                │ (keyed by metadata, evicted on        │ │
-                 │                                │  removal via is_addition)             │ │
+                 │                                │ disk parse cache (DefaultCache        │ │
+                 │                                │ in <persistence>/runtime_calls,       │ │
+                 │                                │ LRU-bounded)                          │ │
                  └────────────────────────────────┼──────────────────────────────────────┼─┘
                                                   │                                      │
                                                   ▼                                      ▼
@@ -405,9 +411,7 @@ the pipeline. Text is extracted on demand inside the parse UDF.
 **Deletion handling.** The parse UDF is non-deterministic, so Pathway memoizes
 its output and, when a file is removed, re-emits that stored text *negated*
 without re-reading the (now gone) file; the retraction flows through chunking and
-embedding and the sink deletes exactly the matching vectors. A
-`pw.io.subscribe` side-channel uses the native per-record `is_addition` flag to
-evict the persistent parse-cache entry, keeping the cache bounded.
+embedding and the sink deletes exactly the matching vectors.
 
 ---
 

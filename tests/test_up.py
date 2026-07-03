@@ -52,7 +52,7 @@ def test_up_serves_after_static_indexing(tmp_path, tcp_port):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(yaml.safe_dump(config))
 
-    env = {**os.environ, "VETOSH_CACHE_DIR": str(tmp_path / "cache")}
+    env = dict(os.environ)
     proc = subprocess.Popen(
         [sys.executable, "-m", "vetosh.cli", "up", "--config", str(cfg)],
         cwd=REPO_ROOT,

@@ -50,20 +50,28 @@ def _terminate(proc: subprocess.Popen, name: str) -> None:
 
 
 def _warn_duckdb_streaming(config: VetoshConfig) -> None:
-    # Until pathway's pw.io.duckdb.write supports detach_between_batches, a
-    # STREAMING indexer holds the DuckDB file read-write for its lifetime and
-    # the server cannot open it. Surface that up front instead of letting
-    # every query fail with a lock error.
+    # With pathway >= #10496 the duckdb sink detaches between batches and the
+    # server reads the file concurrently; only warn on older builds, where a
+    # STREAMING indexer holds the file read-write for its lifetime.
     if config.vector_db and config.vector_db.type == "duckdb" and any(
         src.mode == "streaming" for src in config.sources
     ):
-        logger.warning(
-            "DuckDB + streaming sources: the indexer holds the database file "
-            "read-write, so server queries will fail with a lock error until "
-            "the indexer stops. This resolves once Pathway ships "
-            "detach_between_batches for pw.io.duckdb.write; meanwhile use a "
-            "client-server backend (qdrant, pgvector, ...) for live serving."
+        import inspect
+
+        import pathway as pw
+
+        supported = (
+            "detach_between_batches"
+            in inspect.signature(pw.io.duckdb.write).parameters
         )
+        if not supported:
+            logger.warning(
+                "DuckDB + streaming sources on this pathway build: the indexer "
+                "holds the database file read-write, so server queries will "
+                "fail with a lock error until the indexer stops. Upgrade "
+                "pathway (duckdb detach_between_batches) or use a "
+                "client-server backend for live serving."
+            )
 
 
 def run(config: VetoshConfig, config_path: str) -> int:

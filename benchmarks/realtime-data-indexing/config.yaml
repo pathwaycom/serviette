@@ -25,8 +25,12 @@ vector_db:
 
 embedder:
   type: sentence_transformer            # LOCAL — no external API, free
-  model: sentence-transformers/all-MiniLM-L6-v2   # 384 dims, CPU-friendly
-  batch_size: 256
+  # Static token embeddings (no transformer forward pass): ~100x faster on
+  # CPU than MiniLM while staying real semantic vectors — right trade-off for
+  # a throughput benchmark. Matryoshka-truncated to 256 dims.
+  model: sentence-transformers/static-retrieval-mrl-en-v1
+  truncate_dim: 256
+  batch_size: 2048
 
 splitter:
   type: token_count
@@ -35,8 +39,13 @@ splitter:
 indexer:
   workers: 8              # Pathway worker PROCESSES (via `pathway spawn`)
 
+# Product default: persistence on. Lives inside the container (fresh each
+# run, since run_bench recreates containers), so runs stay cold-start honest
+# while exercising the same code path users get — including the disk-backed
+# parse cache under <path>/runtime_calls.
 persistence:
-  enabled: false          # clean cold run; nothing cached between runs
+  enabled: true
+  path: /tmp/persistence
 
 server:
   host: 0.0.0.0

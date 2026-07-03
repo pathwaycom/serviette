@@ -55,9 +55,12 @@ def main(argv: list[str] | None = None) -> None:
 
     inside_spawn = "PATHWAY_PROCESS_ID" in os.environ
     if config.indexer.workers > 1 and not inside_spawn:
-        # Prepare the target once, in the parent, before any worker writes.
+        # Check the persistence fingerprint and prepare the target once, in
+        # the parent, before any worker starts writing.
+        from vetosh.indexer.fingerprint import check_fingerprint
         from vetosh.indexer.prepare import prepare_backend
 
+        check_fingerprint(config)
         prepare_backend(config)
         raise SystemExit(
             _spawn_workers(

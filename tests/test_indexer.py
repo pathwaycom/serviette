@@ -45,8 +45,8 @@ def _write_config(tmp_path, docs_dir, store, persist_dir, *, persistence: bool) 
     return cfg_path
 
 
-def _run_pass(cfg_path: Path, cache_dir: Path) -> None:
-    env = {**os.environ, "VETOSH_CACHE_DIR": str(cache_dir)}
+def _run_pass(cfg_path: Path, cache_dir: Path | None = None) -> None:
+    env = dict(os.environ)
     proc = subprocess.run(
         [sys.executable, "-m", "vetosh.cli", "indexer", "--config", str(cfg_path)],
         cwd=REPO_ROOT,

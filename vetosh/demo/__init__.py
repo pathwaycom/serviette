@@ -97,6 +97,12 @@ def build_demo_config(
 def _resolve_license_key() -> str:
     if os.environ.get("PATHWAY_LICENSE_KEY"):
         return "${PATHWAY_LICENSE_KEY}"
+    if not sys.stdin.isatty():
+        raise SystemExit(
+            "vetosh demo needs a Pathway license key (free, one click at "
+            "https://pathway.com/framework/get-license). Set "
+            "PATHWAY_LICENSE_KEY and re-run."
+        )
     print(
         "vetosh demo needs a (free) Pathway license key — one click at\n"
         "https://pathway.com/framework/get-license"
@@ -143,7 +149,7 @@ def main(argv: list[str]) -> None:
 
     parser = argparse.ArgumentParser(prog="vetosh demo", description=__doc__)
     parser.add_argument("--dir", default="./vetosh-demo", help="Demo working directory")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8989)
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

@@ -18,8 +18,6 @@ BASE = {
     "embedder_api_key": "${OPENAI_API_KEY}",
     "chunk_size": 512,
     "chunk_overlap": 50,
-    "persistence_enabled": True,
-    "persistence_path": "/var/vetosh/persistence",
     "server_host": "0.0.0.0",
     "server_port": 8000,
     "rag_enabled": False,
@@ -133,11 +131,11 @@ def test_defaults_have_no_brand_name():
 
     answers = {**BASE, "config_type": "universal"}
     # Drop explicit overrides so build_config falls back to its own defaults.
-    for key in ("collection", "persistence_path"):
-        answers.pop(key, None)
+    answers.pop("collection", None)
     config = build_config(answers)
     assert config["vector_db"]["table"] == "embeddings"
-    assert "vetosh" not in config["persistence"]["path"]
+    # Persistence is a silent schema default now — not emitted by the wizard.
+    assert "persistence" not in config
 
 
 def _feed(tokens):
@@ -150,17 +148,14 @@ def test_wizard_run_collects_multiple_sources():
 
     tokens = [
         "2",                       # config type: indexer only
-        "1", "/data/a", "",        # source 1: filesystem, path, default glob
-        "1", "/data/b", "",        # source 2: filesystem, path, default glob
-        "5",                       # add another? -> Done (fs, gdrive, s3, sharepoint, done)
+        "1", "/data/a",            # source 1: filesystem (glob is YAML-only now)
+        "1", "/data/b",            # source 2: filesystem
+        "5",                       # add another? -> Done
         "2",                       # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",   # pg connection string
         "",                        # collection (default)
-        "1",                       # embedder: openai
+        "2",                       # embedder: openai (1 = local sentence_transformer)
         "", "",                    # embedder model, api key (defaults)
-        "", "",                    # chunk size, overlap (defaults)
-        "",                        # persistence enabled? Yes (default)
-        "",                        # persistence path (default)
         "MY-KEY",                  # license key
         "",                        # output path (default)
     ]
@@ -189,12 +184,8 @@ def test_wizard_run_collects_gdrive_source():
         "2",                        # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",
         "",                         # collection default
-        "1", "", "",                # embedder openai, model, key
-        "", "",                     # chunk size/overlap
-        "",                         # persistence yes
-        "",                         # persistence path
-        "0.0.0.0", "8000",          # server host/port
-        "",                         # rag? No (default index 1 -> blank=default? confirm default False)
+        "1",                        # embedder: local sentence_transformer -> no questions
+        "",                         # rag? No (default)
         "LIC",                      # license
         "",                         # output path
     ]
@@ -209,3 +200,26 @@ def test_wizard_run_collects_gdrive_source():
 
     cfg = _validate(answers)
     cfg.for_indexer()
+
+
+def test_wizard_duckdb_happy_path_is_minimal(tmp_path, monkeypatch):
+    """DuckDB + local embedder: no path/table/model/splitter questions at all
+    (nothing exists yet, so defaults apply silently)."""
+
+    monkeypatch.chdir(tmp_path)  # ./embeddings.duckdb must not exist
+    tokens = [
+        "2",            # config type: indexer only
+        "1", "/data/a",  # one filesystem source
+        "5",            # done
+        "1",            # vector db: duckdb -> defaults, no questions
+        "1",            # embedder: local sentence_transformer -> no questions
+        "K",            # license key
+        "",             # output path
+    ]
+    prompter = ScriptedPrompter(input_fn=_feed(tokens), output_fn=lambda _s: None)
+    answers = Wizard(prompter=prompter).run()
+    cfg = _validate(answers)
+    cfg.for_indexer()
+    assert cfg.vector_db.type == "duckdb"
+    assert cfg.vector_db.path == "./embeddings.duckdb"
+    assert cfg.embedder.type == "sentence_transformer"
