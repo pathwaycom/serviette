@@ -31,7 +31,7 @@ def build_mock_embedder():
 
     import pathway as pw
 
-    @pw.udf
+    @pw.udf(deterministic=True)  # pure hash; the engine need not memoize it
     def embed(text: str) -> np.ndarray:
         return np.array(fake_embedding(text), dtype=float)
 

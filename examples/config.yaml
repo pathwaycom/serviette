@@ -60,7 +60,7 @@ vector_db:
 
   # type: chroma              # collection must exist (cosine hnsw:space)
   # host: localhost
-  # port: 8000
+  # port: 8989
   # collection: vetosh_embeddings
 
   # type: weaviate            # collection must exist
@@ -92,14 +92,16 @@ splitter:
   chunk_size: 512
   chunk_overlap: 50
 
-persistence:
-  enabled: true
-  backend: filesystem
-  path: /var/vetosh/persistence
+# Persistence is ON by default (silent default: ./persistence, on disk).
+# It powers incremental restarts AND the parse cache. Advanced: tune here.
+# persistence:
+#   enabled: true
+#   backend: filesystem
+#   path: ./persistence
 
 server:
   host: 0.0.0.0
-  port: 8000
+  port: 8989
   # The chat UI is served on "/" from this same port (API lives under
   # /api/v1). Set to false for a pure-API deployment.
   serve_frontend: true
@@ -110,7 +112,7 @@ server:
 # frontend:
 #   host: 0.0.0.0
 #   port: 3000
-#   api_url: http://localhost:8000
+#   api_url: http://localhost:8989
 #   title: vetosh
 
 llm: # optional, for the /rag endpoint

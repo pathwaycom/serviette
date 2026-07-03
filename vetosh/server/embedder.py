@@ -89,15 +89,19 @@ class SentenceTransformerAsyncEmbedder:
 
     def __init__(self, config) -> None:
         self._model_name = config.model or self._DEFAULT_MODEL
-        extra = config.model_dump(exclude={"type", "model", "api_key"})
-        self._device = extra.get("device", "cpu")
+        # Forward extra config keys (device, truncate_dim, ...) to the
+        # SentenceTransformer constructor — mirrors the indexer's xpack
+        # embedder, so e.g. Matryoshka truncation stays consistent.
+        extra = config.model_dump(exclude={"type", "model", "api_key", "batch_size"})
+        self._model_kwargs = {k: v for k, v in extra.items() if v is not None}
+        self._model_kwargs.setdefault("device", "cpu")
         self._model = None
 
     def _ensure_model(self):
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self._model_name, device=self._device)
+            self._model = SentenceTransformer(self._model_name, **self._model_kwargs)
         return self._model
 
     async def embed(self, text: str) -> list[float]:

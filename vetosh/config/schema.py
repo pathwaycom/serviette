@@ -43,6 +43,11 @@ class FsSource(BaseModel):
     # current contents once and lets the graph terminate (used for one-shot
     # indexing and tests).
     mode: Literal["streaming", "static"] = "streaming"
+    # Bound on entries the connector keeps in flight before downstream
+    # processing catches up. Backpressure keeps the indexer's memory flat
+    # during bulk backfills and makes sink commits arrive steadily instead of
+    # in one giant batch. None disables the bound.
+    max_backlog_size: int | None = 1000
 
 
 class GDriveSource(BaseModel):
@@ -62,6 +67,8 @@ class GDriveSource(BaseModel):
     file_name_pattern: str | list[str] | None = None
     object_size_limit: int | None = None
     mode: Literal["streaming", "static"] = "streaming"
+    # See FsSource.max_backlog_size.
+    max_backlog_size: int | None = 1000
 
 
 class S3Source(BaseModel):
@@ -85,6 +92,8 @@ class S3Source(BaseModel):
     endpoint: str | None = None
     with_path_style: bool = False
     mode: Literal["streaming", "static"] = "streaming"
+    # See FsSource.max_backlog_size.
+    max_backlog_size: int | None = 1000
 
     @model_validator(mode="after")
     def _custom_endpoint_needs_region(self) -> "S3Source":
@@ -172,11 +181,11 @@ class DuckDbConfig(BaseModel):
     **inside DuckDB** with ``list_cosine_similarity`` — a vectorized, columnar
     scan, not a Python loop.
 
-    DuckDB is single-writer *per process*: while a streaming indexer holds the
-    file open read-write, a separate server process cannot open it (even
-    read-only). Use ``mode: static`` sources (index once, then serve), or pick a
-    client-server backend (qdrant, pgvector, ...) for concurrent live indexing
-    and serving.
+    Concurrency: the sink writes with ``detach_between_batches`` (Pathway ≥
+    #10496), releasing the single-writer file lock between minibatches, so the
+    server's retrying read-only connections query the same file while a
+    streaming indexer runs. On older Pathway builds vetosh warns and falls
+    back to hold-the-lock behavior (use ``mode: static`` there).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -348,21 +357,36 @@ class IndexerConfig(BaseModel):
     # itself through `pathway spawn --processes N` (one worker thread each);
     # sinks that key rows internally (e.g. qdrant) write in parallel.
     workers: int = Field(default=1, ge=1)
+    # Advanced. Disk budget for the parse cache (pw.udfs.DefaultCache, stored
+    # under <persistence dir>/runtime_calls, LRU-evicted). Size it at least to
+    # the extracted-text volume of the corpus to avoid re-parse churn.
+    parse_cache_size_gb: int = Field(default=8, ge=1)
 
 
 class PersistenceConfig(BaseModel):
+    """On-disk persistence — the silent default (the wizard does not ask).
+
+    Carries three things: incremental state across restarts (no re-embedding
+    of unchanged documents), correct retraction of files deleted while the
+    indexer was down, and the parse cache (``runtime_calls``). Advanced users
+    tune or disable it by editing the config directly; disabling also
+    disables the parse cache.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
     backend: Literal["filesystem"] = "filesystem"
-    path: str = "/var/vetosh/persistence"
+    # Relative to the indexer's working directory; writable out of the box.
+    path: str = "./persistence"
 
 
 class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     host: str = "0.0.0.0"
-    port: int = 8000
+    # An uncommon default port: 8000/8080 collide with half the dev tools.
+    port: int = 8989
     # Serve the chat UI on "/" from the same process/port (same-origin, no
     # CORS). Disable for a pure-API deployment; the standalone
     # `vetosh frontend` command covers split UI/API deployments.
@@ -382,7 +406,7 @@ class FrontendConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 3000
     # Base URL of the vetosh server API this frontend talks to.
-    api_url: str = "http://localhost:8000"
+    api_url: str = "http://localhost:8989"
     title: str = APP_NAME
 
 

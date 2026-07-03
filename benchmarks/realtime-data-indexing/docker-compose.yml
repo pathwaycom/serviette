@@ -17,7 +17,9 @@ x-vetosh: &vetosh
     PYTHONPATH: "/opt/pathway-src/python:/home/sergey/vetosh:/home/sergey/vetosh/.venv312/lib/python3.12/site-packages:/home/sergey/vetosh/.venv312/lib64/python3.12/site-packages"
     PATHWAY_LICENSE_KEY: ${PATHWAY_LICENSE_KEY:-}
     HF_HOME: /hf-cache
-    VETOSH_CACHE_DIR: /tmp/vetosh-cache
+    # Model cache is pre-warmed by run_bench on the host; containers never
+    # touch the network (8 workers probing HF concurrently hit rate limits).
+    HF_HUB_OFFLINE: "1"
     # The dev-built engine links libs from the pixi toolchain (libpq, libssl…)
     # and -ffast-math symbols glibc dropped (see compat/finite_shim.c).
     LD_LIBRARY_PATH: /opt/pixi-lib
@@ -29,7 +31,7 @@ x-vetosh: &vetosh
     - /mnt/scratch/sergey/iot-pathway-develop-wt/public/pathway/python:/opt/pathway-src/python:ro
     - /mnt/scratch/sergey/pixi/IoT-Pathway-18069838481262607842/envs/default/lib:/opt/pixi-lib:ro
     - ./compat:/opt/compat:ro
-    - ${HOME}/.cache/huggingface:/hf-cache
+    - ${HOME}/.cache/huggingface:/hf-cache:ro
     - ./datasets/${BENCH_SIZE:-100mb}/docs:/data/docs:ro
     - ./config.yaml:/bench/config.yaml:ro
 

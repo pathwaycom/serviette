@@ -113,7 +113,7 @@ def _write_config(tmp_path: Path, docs: Path, dsn: str) -> Path:
 
 
 def _run_indexer(cfg: Path, cache_dir: Path) -> None:
-    env = {**os.environ, "VETOSH_CACHE_DIR": str(cache_dir)}
+    env = dict(os.environ)
     proc = subprocess.run(
         [sys.executable, "-m", "vetosh.cli", "indexer", "--config", str(cfg)],
         cwd=REPO_ROOT,

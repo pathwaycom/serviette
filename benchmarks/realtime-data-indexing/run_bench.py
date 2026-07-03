@@ -102,6 +102,15 @@ def _proc_cpu_seconds(container: str) -> float | None:
     return ticks / 100.0  # USER_HZ is 100 on Linux
 
 
+def _embedder_description() -> str:
+    import yaml
+
+    embedder = yaml.safe_load((ROOT / "config.yaml").read_text()).get("embedder", {})
+    model = embedder.get("model", "?")
+    dims = embedder.get("truncate_dim")
+    return f"{model} (local{f', {dims} dims' if dims else ''})"
+
+
 def _wait_http(url: str, timeout: float, message: str) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -160,6 +169,29 @@ def main() -> None:
     # (a pre-filled Qdrant, an old indexer) would silently corrupt every
     # measurement.
     _compose("down", "-v", size=args.size)
+
+    # Pre-warm the HF model cache on the host: containers run HF_HUB_OFFLINE.
+    import yaml as _yaml
+
+    model = _yaml.safe_load((ROOT / "config.yaml").read_text())["embedder"].get(
+        "model"
+    )
+    if model:
+        # Filesystem check first: lock-free (old runs left root-owned lock
+        # files in the mounted cache), and offline containers only need the
+        # snapshot to exist.
+        snapshots = (
+            Path.home()
+            / ".cache/huggingface/hub"
+            / ("models--" + model.replace("/", "--"))
+            / "snapshots"
+        )
+        if not (snapshots.exists() and any(snapshots.iterdir())):
+            from huggingface_hub import snapshot_download
+
+            print(f"== pre-warming model cache: {model}")
+            snapshot_download(model)
+
     _compose("up", "-d", "qdrant", size=args.size)
     _wait_http(
         f"http://127.0.0.1:{args.qdrant_port}/readyz", 120, "qdrant not ready"
@@ -269,7 +301,7 @@ def main() -> None:
             round(db_bytes / 1024 / 1024 / size_mb, 2) if db_bytes else None
         ),
         "retrieval_accuracy": f"{hits}/{total}",
-        "embedder": "sentence-transformers/all-MiniLM-L6-v2 (local, 384 dims)",
+        "embedder": _embedder_description(),
         # Standard text page ≈ 2000 characters (≈ bytes for English text).
         "approx_text_pages": int(size_mb * 1024 * 1024 / 2000),
         # Which questions missed top-k, with what came back instead.

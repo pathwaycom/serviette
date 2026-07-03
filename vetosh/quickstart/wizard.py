@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Callable
 
 import yaml
@@ -26,7 +27,15 @@ import yaml
 from vetosh import APP_NAME
 
 # Embedder families supported by pathway.xpacks.llm.embedders.
-EMBEDDER_CHOICES = ["openai", "litellm", "sentence_transformer", "gemini", "bedrock"]
+# The default requires no API key at all (fully local).
+EMBEDDER_CHOICES = ["sentence_transformer", "openai", "litellm", "gemini", "bedrock"]
+EMBEDDER_LABELS = [
+    "sentence_transformer (local \u00b7 no API key needed)",
+    "openai",
+    "litellm",
+    "gemini",
+    "bedrock",
+]
 
 # Document source types offered by the wizard. Only sources with an
 # only_metadata read mode are supported. SharePoint slots in here (+ a branch
@@ -35,7 +44,7 @@ SOURCE_TYPES: list[tuple[str, str]] = [
     ("fs", "Filesystem (local directory)"),
     ("gdrive", "Google Drive"),
     ("s3", "S3 / MinIO / S3-compatible bucket"),
-    ("sharepoint", "Microsoft SharePoint (Scale license)"),
+    ("sharepoint", "Microsoft SharePoint"),
 ]
 
 # Default environment-variable references per provider, so generated configs
@@ -50,12 +59,25 @@ _ENV_REF = {
 
 # Simple, brand-neutral defaults suggested by the wizard.
 DEFAULT_COLLECTION = "embeddings"
-DEFAULT_PERSISTENCE_PATH = "./persistence"
 
 
 # ---------------------------------------------------------------------------
 # Pure config builder (no I/O)
 # ---------------------------------------------------------------------------
+
+
+def _duckdb_table_exists(path: str, table: str) -> bool:
+    try:
+        import duckdb
+
+        conn = duckdb.connect(path, read_only=True)
+        try:
+            tables = {row[0] for row in conn.execute("SHOW TABLES").fetchall()}
+        finally:
+            conn.close()
+        return table in tables
+    except Exception:  # noqa: BLE001 - unreadable file: let the indexer report
+        return False
 
 
 def build_config(answers: dict[str, Any]) -> dict[str, Any]:
@@ -84,16 +106,14 @@ def build_config(answers: dict[str, Any]) -> dict[str, Any]:
             "chunk_size": answers.get("chunk_size", 512),
             "chunk_overlap": answers.get("chunk_overlap", 50),
         }
-        config["persistence"] = {
-            "enabled": answers.get("persistence_enabled", True),
-            "backend": "filesystem",
-            "path": answers.get("persistence_path", DEFAULT_PERSISTENCE_PATH),
-        }
+        # Persistence is a silent default (enabled, on disk, ./persistence):
+        # the section is not emitted and the wizard does not ask — advanced
+        # users tune it by adding a `persistence:` section to the config.
 
     if needs_server:
         config["server"] = {
             "host": answers.get("server_host", "0.0.0.0"),
-            "port": answers.get("server_port", 8000),
+            "port": answers.get("server_port", 8989),
         }
         if answers.get("rag_enabled"):
             config["llm"] = _llm_section(answers)
@@ -389,8 +409,9 @@ class Wizard:
     def _collect_source(self, stype: str) -> dict[str, Any]:
         if stype == "fs":
             path = self.p.text("Directory path", required=True)
-            glob = self.p.text("File glob pattern", default="**/*")
-            return {"type": "fs", "path": path, "glob": glob}
+            # glob is an advanced setting: default emitted into the YAML,
+            # edit it there.
+            return {"type": "fs", "path": path, "glob": "**/*"}
         if stype == "gdrive":
             object_id = self.p.text("Google Drive folder/file id", required=True)
             creds = self.p.text(
@@ -484,27 +505,43 @@ class Wizard:
         vdb_idx = self.p.select("Vector database:", vdb_labels, default_index=0)
         answers["vector_db_type"] = vdb_values[vdb_idx]
 
-        self._section("Vector DB connection")
         vdb_type = answers["vector_db_type"]
         if vdb_type == "duckdb":
-            answers["duckdb_path"] = self.p.text(
-                "DuckDB file path", default="./embeddings.duckdb"
-            )
+            # Zero-question happy path: defaults are used silently; the user
+            # is only consulted when a file/table already exists, so nothing
+            # gets overwritten by accident.
+            path = "./embeddings.duckdb"
+            if Path(path).exists():
+                self._section("Vector DB connection")
+                path = self.p.text(
+                    f"DuckDB file {path} already exists; path to use", default=path
+                )
+            answers["duckdb_path"] = path
+            answers["collection"] = DEFAULT_COLLECTION
+            if Path(path).exists() and _duckdb_table_exists(path, DEFAULT_COLLECTION):
+                answers["collection"] = self.p.text(
+                    f"Table {DEFAULT_COLLECTION!r} already exists in {path}; table to use",
+                    default=DEFAULT_COLLECTION,
+                )
         elif vdb_type == "milvus":
+            self._section("Vector DB connection")
             uri = self.p.text("Milvus URI (leave blank to use host + port)", default="")
             answers["milvus_uri"] = uri or None
             if not answers["milvus_uri"]:
                 answers["milvus_host"] = self.p.text("Milvus host", default="localhost")
                 answers["milvus_port"] = int(self.p.text("Milvus port", default="19530"))
         elif vdb_type == "qdrant":
+            self._section("Vector DB connection")
             answers["qdrant_host"] = self.p.text("Qdrant host", default="localhost")
             answers["qdrant_api_key"] = self.p.text(
                 "Qdrant API key (blank for none)", default=""
             ) or None
         elif vdb_type == "chroma":
+            self._section("Vector DB connection")
             answers["chroma_host"] = self.p.text("Chroma host", default="localhost")
             answers["chroma_port"] = int(self.p.text("Chroma port", default="8000"))
         elif vdb_type == "weaviate":
+            self._section("Vector DB connection")
             answers["weaviate_host"] = self.p.text("Weaviate host", default="localhost")
             answers["weaviate_port"] = int(self.p.text("Weaviate HTTP port", default="8080"))
             answers["weaviate_collection"] = self.p.text(
@@ -514,53 +551,47 @@ class Wizard:
                 "Weaviate API key (blank for none)", default=""
             ) or None
         elif vdb_type == "pinecone":
+            self._section("Vector DB connection")
             answers["pinecone_index"] = self.p.text("Pinecone index name", required=True)
             answers["pinecone_api_key"] = self.p.text(
                 "Pinecone API key", default="${PINECONE_API_KEY}"
             )
         elif vdb_type == "mongodb":
+            self._section("Vector DB connection")
             answers["mongodb_connection_string"] = self.p.text(
                 "MongoDB connection string (mongodb+srv://... for Atlas)", required=True
             )
             answers["mongodb_database"] = self.p.text("Database name", required=True)
         else:
+            self._section("Vector DB connection")
             answers["pg_connection_string"] = self.p.text(
                 "Postgres connection string (postgresql://user:pass@host/db)", required=True
             )
 
-        if vdb_type not in {"pinecone", "weaviate"}:  # collected above for those
+        if vdb_type not in {"pinecone", "weaviate", "duckdb"}:  # handled above
             self._section("Collection / table name")
             answers["collection"] = self.p.text(
                 "Collection / table name", default=DEFAULT_COLLECTION
             )
 
         self._section("Embedder")
-        emb_idx = self.p.select("Embedder:", EMBEDDER_CHOICES, default_index=0)
+        emb_idx = self.p.select("Embedder:", EMBEDDER_LABELS, default_index=0)
         answers["embedder_type"] = EMBEDDER_CHOICES[emb_idx]
 
-        self._section("Embedder model + API key")
-        answers["embedder_model"] = self.p.text("Embedder model (blank for default)", default="") or None
+        # 9) A keyless local embedder needs no further questions: the default
+        # model applies (changeable later in the YAML).
         env_ref = _ENV_REF.get(answers["embedder_type"])
         if env_ref is not None:
+            self._section("Embedder model + API key")
+            answers["embedder_model"] = self.p.text("Embedder model (blank for default)", default="") or None
             answers["embedder_api_key"] = self.p.text("API key", default=env_ref)
 
-        if needs_indexer:
-            self._section("Splitter")
-            answers["chunk_size"] = int(self.p.text("Chunk size", default="512"))
-            answers["chunk_overlap"] = int(self.p.text("Chunk overlap", default="50"))
-
-            self._section("Persistence")
-            answers["persistence_enabled"] = self.p.confirm("Enable persistence?", default=True)
-            if answers["persistence_enabled"]:
-                answers["persistence_path"] = self.p.text(
-                    "Persistence path", default=DEFAULT_PERSISTENCE_PATH
-                )
+        # Splitter and persistence are not asked about: defaults are emitted
+        # into the YAML for the user to tune there.
 
         if needs_server:
-            self._section("Server host + port")
-            answers["server_host"] = self.p.text("Server host", default="0.0.0.0")
-            answers["server_port"] = int(self.p.text("Server port", default="8000"))
-
+            # Host/port are silent defaults (0.0.0.0:8989 — uncommon port, no
+            # tool conflicts); emitted into the YAML for later tuning.
             self._section("Enable /rag endpoint?")
             answers["rag_enabled"] = self.p.confirm("Enable /rag endpoint?", default=False)
             if answers["rag_enabled"]:
@@ -602,7 +633,12 @@ def main(argv: list[str] | None = None) -> None:
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(dump_yaml(config))
     print(f"\nWrote {answers['config_type']} config to {output_path}")
-    print(f"Run it with:  {APP_NAME} indexer --config {output_path}")
+    print(
+        "Advanced settings (file glob patterns, chunking/splitter, "
+        "persistence, backpressure, table names) can be tuned by editing "
+        f"{output_path}."
+    )
+    print(f"Run it with:  {APP_NAME} up --config {output_path}")
 
 
 if __name__ == "__main__":

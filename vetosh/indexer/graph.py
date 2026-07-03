@@ -18,10 +18,15 @@ Deletion semantics
 The parse UDF is registered ``deterministic=False`` (Pathway's default), so on a
 file removal Pathway re-emits the memoised parsed text *negated* and never
 re-reads the now-deleted bytes; the retraction flows through split/embed and the
-sink removes exactly the matching vectors. A ``pw.io.subscribe`` side-channel
-receives the native ``is_addition`` flag and evicts the persistent parse-cache
-entry for removed files so the cache stays bounded. See ``cache.py`` for why we
-do *not* use ``to_stream`` here.
+sink removes exactly the matching vectors.
+
+Parse caching
+-------------
+Cross-restart parse caching is delegated entirely to Pathway:
+``pw.udfs.DefaultCache`` stores results on disk (diskcache, LRU-bounded) under
+``<persistence dir>/runtime_calls`` whenever persistence is enabled — which is
+the default. No caching machinery lives in vetosh; disabling persistence also
+disables the parse cache (every restart re-fetches and re-parses).
 """
 
 from __future__ import annotations
@@ -36,7 +41,6 @@ from typing import Any
 import pathway as pw
 
 from vetosh.config.schema import VetoshConfig
-from vetosh.indexer.cache import ParseCache, cache_key
 from vetosh.indexer.sources import Fetcher, make_fetcher, read_source
 
 logger = logging.getLogger(__name__)
@@ -146,7 +150,16 @@ def build_xpack_embedder(cfg) -> pw.UDF:
     if cfg.type in {"sentence_transformer", "sentencetransformer"}:
         model = common.pop("model", None) or "sentence-transformers/all-MiniLM-L6-v2"
         common.pop("cache_strategy", None)  # local model; caching adds little
-        return embedders.SentenceTransformerEmbedder(model=model, **common)
+        udf = embedders.SentenceTransformerEmbedder(model=model, **common)
+        # Local models are deterministic: the engine may re-run them on
+        # retraction (cheap CPU) instead of memoizing every vector in RAM.
+        # The xpack constructor doesn't expose the flag (upstream PR pending),
+        # so it is set on the built UDF; the engine reads it at expression
+        # build time. API embedders stay memoized — a re-call costs money and
+        # is not guaranteed bit-stable. Model changes across restarts are
+        # guarded by the persistence fingerprint.
+        udf.deterministic = True
+        return udf
     if cfg.type == "gemini":
         return embedders.GeminiEmbedder(api_key=cfg.api_key, **common)
     if cfg.type == "bedrock":
@@ -181,69 +194,71 @@ def build_graph(
     *,
     embedder: pw.UDF | None = None,
     splitter=None,
-    parse_cache: ParseCache | None = None,
 ) -> pw.Table:
     """Build the indexing graph and return the final embeddings table.
 
-    ``embedder``/``splitter``/``parse_cache`` can be injected (tests pass a mock
-    embedder and a temp cache); otherwise they are built from ``config``.
+    ``embedder``/``splitter`` can be injected (tests pass a mock embedder);
+    otherwise they are built from ``config``.
     """
 
     config.for_indexer()
 
-    cache = parse_cache if parse_cache is not None else ParseCache()
     registry = ParserRegistry()
     splitter = splitter if splitter is not None else build_xpack_splitter(config.splitter)
     embedder = embedder if embedder is not None else build_xpack_embedder(config.embedder)
 
     # -- parse UDF factory ---------------------------------------------------
     # deterministic=False => memoised; never re-runs on retraction (the source
-    # object is gone). cache_strategy persists parsed text across restarts. The
+    # object is gone). DefaultCache persists parsed text across restarts on
+    # disk when persistence is enabled (LRU-bounded; size from config). The
     # fetcher makes byte retrieval source-specific (local path vs Drive download).
+    cache_strategy = pw.udfs.DefaultCache(
+        size_limit=config.indexer.parse_cache_size_gb * 2**30
+    )
+
     def make_parse_udf(fetcher: Fetcher):
-        @pw.udf(deterministic=False, cache_strategy=pw.udfs.DefaultCache())
+        @pw.udf(deterministic=False, cache_strategy=cache_strategy)
         def parse_document(metadata: pw.Json) -> str:
             meta = _json_to_dict(metadata)
-            cached = cache.get(meta)
-            if cached is not None:
-                return cached
             try:
                 contents, suffix = fetcher.fetch(meta)
             except Exception as exc:  # noqa: BLE001 - object may have vanished / be unreadable
                 logger.warning("Could not fetch source object %s: %s", meta, exc)
                 return ""
-            text = registry.parse(contents, suffix)
-            cache.store(meta, text)
-            return text
+            return registry.parse(contents, suffix)
 
         return parse_document
 
-    @pw.udf
+    # Pure-function whitelist: for these splitter types re-running the UDF is
+    # guaranteed to reproduce the original chunks, so the engine need not
+    # memoize its outputs (a full extra copy of the corpus in RAM). Guarded
+    # against config/library drift by the persistence fingerprint (see
+    # fingerprint.py). Unknown/future splitter types fall back to memoization.
+    _PURE_SPLITTERS = {"token_count", "tokencount", "recursive", "recursive_character", "null", "none"}
+    split_is_pure = config.splitter.type in _PURE_SPLITTERS
+
+    @pw.udf(deterministic=split_is_pure)
     def split_text(text: str) -> list[str]:
         if not text:
             return []
         return [chunk for chunk, _meta in splitter.chunk(text)]
 
-    @pw.udf
-    def make_id(metadata: pw.Json, text: str) -> str:
+    @pw.udf(deterministic=True)
+    def make_id(meta_json: str, text: str) -> str:
+        # meta_json is the canonical per-document serialization from
+        # _metadata_as_json, so the id is reproducible for (metadata, text).
         digest = hashlib.sha256()
-        digest.update(cache_key(_json_to_dict(metadata)).encode("utf-8"))
+        digest.update(meta_json.encode("utf-8"))
         digest.update(b"\x00")
         digest.update(text.encode("utf-8"))
         return digest.hexdigest()
 
-    # -- cache eviction on removal (native is_addition via subscribe) --------
-    def _evict(key, row, time, is_addition):  # noqa: ANN001 - pathway callback
-        if not is_addition:
-            cache.delete(_json_to_dict(row["_metadata"]))
-
-    # -- per-source: read (only_metadata) -> evict hook -> parse -------------
+    # -- per-source: read (only_metadata) -> parse ----------------------------
     # Each source gets its own fetcher-bound parse UDF; parsed tables share the
     # (_metadata, text) schema and are concatenated before splitting/embedding.
     parsed_tables: list[pw.Table] = []
     for i, src in enumerate(config.sources):
         table = read_source(src, name=f"source_{i}")
-        pw.io.subscribe(table, on_change=_evict)
         parse_document = make_parse_udf(make_fetcher(src))
         parsed_tables.append(
             table.select(_metadata=pw.this._metadata, text=parse_document(pw.this._metadata))
@@ -256,14 +271,22 @@ def build_graph(
     )
 
     # -- split -> flatten -> embed -------------------------------------------
-    chunked = parsed.select(_metadata=pw.this._metadata, chunk=split_text(pw.this.text))
+    # The canonical metadata JSON is computed once per DOCUMENT here; flatten
+    # then replicates the reference per chunk instead of re-serializing the
+    # same dict for every chunk.
+    chunked = parsed.select(
+        _metadata=pw.this._metadata,
+        meta_json=_metadata_as_json(pw.this._metadata),
+        chunk=split_text(pw.this.text),
+    )
     exploded = chunked.flatten(pw.this.chunk)
     # Pathway reserves the column name "id", so the chunk's primary key lives in
     # "chunk_id"; the sinks map it to each backend's id/primary-key field.
     embedded = exploded.select(
-        chunk_id=make_id(pw.this._metadata, pw.this.chunk),
+        chunk_id=make_id(pw.this.meta_json, pw.this.chunk),
         text=pw.this.chunk,
         metadata=pw.this._metadata,
+        metadata_json=pw.this.meta_json,
         embedding=embedder(pw.this.chunk),
     )
 
@@ -277,37 +300,62 @@ def build_graph(
 
 
 def _write_sink(table: pw.Table, config: VetoshConfig) -> None:
+    """Route the embedded table to the configured backend sink.
+
+    ``table`` carries the metadata twice (native ``metadata`` Json and the
+    canonical ``metadata_json`` string); each sink selects exactly the columns
+    its backend stores, so nothing is written twice and backends that key rows
+    internally (qdrant, mongodb) don't carry a dead ``chunk_id`` field.
+    """
+
     vdb = config.vector_db
+    # Backends storing native JSON metadata, keyed by chunk_id.
+    plain = table.select(
+        chunk_id=pw.this.chunk_id,
+        text=pw.this.text,
+        metadata=pw.this.metadata,
+        embedding=pw.this.embedding,
+    )
+    # Backends restricted to scalar record metadata: the JSON string form.
+    jsonified = table.select(
+        chunk_id=pw.this.chunk_id,
+        text=pw.this.text,
+        metadata=pw.this.metadata_json,
+        embedding=pw.this.embedding,
+    )
     if vdb.type == "duckdb":
-        _write_duckdb(table, vdb)
+        _write_duckdb(jsonified, vdb)
     elif vdb.type == "pgvector":
-        _write_pgvector(table, vdb)
+        _write_pgvector(plain, vdb)
     elif vdb.type == "milvus":
-        _write_milvus(table, vdb)
+        _write_milvus(plain, vdb)
     elif vdb.type == "qdrant":
-        _write_qdrant(table, vdb)
+        # No chunk_id: the sink keys points internally; payload = text + metadata.
+        _write_qdrant(plain.without(pw.this.chunk_id), vdb)
     elif vdb.type == "chroma":
-        _write_chroma(table, vdb)
+        _write_chroma(jsonified, vdb)
     elif vdb.type == "weaviate":
-        _write_weaviate(table, vdb)
+        _write_weaviate(jsonified, vdb)
     elif vdb.type == "pinecone":
-        _write_pinecone(table, vdb)
+        _write_pinecone(jsonified, vdb)
     elif vdb.type == "mongodb":
-        _write_mongodb(table, vdb)
+        # No chunk_id: snapshot mode keys documents by the internal _id.
+        _write_mongodb(plain.without(pw.this.chunk_id), vdb)
     else:  # pragma: no cover - guarded by schema
         raise ValueError(f"Unsupported vector_db type: {vdb.type!r}")
 
 
-@pw.udf
+@pw.udf(deterministic=True)
 def _metadata_as_json(metadata: pw.Json) -> str:
-    """Serialize the metadata dict to a JSON string.
+    """Serialize the metadata dict to one canonical JSON string.
 
-    Chroma / Weaviate / Pinecone restrict record metadata to scalar values, so
-    the source metadata travels as one JSON string field and the matching
-    accessor parses it back.
+    Computed once per *document* (before chunk flattening) and reused for
+    every chunk: as the string form stored by backends whose record metadata
+    must be scalar (duckdb/chroma/weaviate/pinecone), and as the metadata part
+    of the chunk id hash. sort_keys/ensure_ascii keep it byte-stable.
     """
 
-    return json.dumps(_json_to_dict(metadata))
+    return json.dumps(_json_to_dict(metadata), sort_keys=True, ensure_ascii=True)
 
 
 def _write_pgvector(table: pw.Table, vdb) -> None:
@@ -350,12 +398,20 @@ def _write_duckdb(table: pw.Table, vdb) -> None:
     other backends.
     """
 
-    out = table.select(
-        chunk_id=pw.this.chunk_id,
-        text=pw.this.text,
-        metadata=_metadata_as_json(pw.this.metadata),
-        embedding=pw.this.embedding,
-    )
+    out = table
+    kwargs: dict[str, Any] = {}
+    # Release the single-writer file lock between minibatches so a separate
+    # server process can answer queries while the streaming indexer runs
+    # (pathway >= #10496; the accessor retries through the brief lock
+    # windows). Older builds keep the previous hold-the-lock behavior.
+    if "detach_between_batches" in inspect.signature(pw.io.duckdb.write).parameters:
+        kwargs["detach_between_batches"] = True
+    else:
+        logger.warning(
+            "This pathway build lacks duckdb detach_between_batches: while a "
+            "streaming indexer runs, a separate server process cannot read "
+            "the database file."
+        )
     pw.io.duckdb.write(
         out,
         table_name=vdb.table,
@@ -363,6 +419,7 @@ def _write_duckdb(table: pw.Table, vdb) -> None:
         output_table_type="snapshot",
         primary_key=[out.chunk_id],
         init_mode="create_if_not_exists",
+        **kwargs,
     )
 
 
@@ -386,12 +443,7 @@ def _write_qdrant(table: pw.Table, vdb) -> None:
 def _write_chroma(table: pw.Table, vdb) -> None:
     """Write to a pre-existing ChromaDB collection (cosine ``hnsw:space``)."""
 
-    out = table.select(
-        chunk_id=pw.this.chunk_id,
-        text=pw.this.text,
-        metadata=_metadata_as_json(pw.this.metadata),
-        embedding=pw.this.embedding,
-    )
+    out = table
     pw.io.chroma.write(
         out,
         vdb.collection,
@@ -411,12 +463,7 @@ def _write_chroma(table: pw.Table, vdb) -> None:
 def _write_weaviate(table: pw.Table, vdb) -> None:
     """Write to a pre-existing Weaviate collection (object vector + properties)."""
 
-    out = table.select(
-        chunk_id=pw.this.chunk_id,
-        text=pw.this.text,
-        metadata=_metadata_as_json(pw.this.metadata),
-        embedding=pw.this.embedding,
-    )
+    out = table
     pw.io.weaviate.write(
         out,
         vdb.collection,
@@ -432,12 +479,7 @@ def _write_weaviate(table: pw.Table, vdb) -> None:
 def _write_pinecone(table: pw.Table, vdb) -> None:
     """Write to a pre-existing Pinecone index (dimension must match)."""
 
-    out = table.select(
-        chunk_id=pw.this.chunk_id,
-        text=pw.this.text,
-        metadata=_metadata_as_json(pw.this.metadata),
-        embedding=pw.this.embedding,
-    )
+    out = table
     pw.io.pinecone.write(
         out,
         vdb.index_name,
@@ -520,6 +562,11 @@ def run_indexer(
         pw.set_license_key(config.pathway_license_key)
     config.for_indexer()
     if prepare:
+        # Refuse to run against persisted state built with an incompatible
+        # config (chunking drift corrupts retractions — see fingerprint.py).
+        from vetosh.indexer.fingerprint import check_fingerprint
+
+        check_fingerprint(config)
         # Create the target table/collection/index if missing — the connectors
         # auto-create only for duckdb and qdrant (see prepare.py).
         from vetosh.indexer.prepare import prepare_backend

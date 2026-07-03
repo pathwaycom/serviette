@@ -16,7 +16,7 @@ embedder in a YAML file, and run a few commands.
 pip install "vetosh[openai]"
 
 vetosh quickstart                       # interactive config wizard
-vetosh up --config config.yaml          # indexer + server together → http://localhost:8000
+vetosh up --config config.yaml          # indexer + server together → http://localhost:8989
 ```
 
 (Or run `vetosh indexer` and `vetosh server` separately — that is what `up`
@@ -26,7 +26,7 @@ The server hosts both the web chat UI (on `/`) and the versioned REST API
 (under `/api/v1`) on one port:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/retrieve \
+curl -X POST http://localhost:8989/api/v1/retrieve \
   -H 'Content-Type: application/json' \
   -d '{"query": "how does persistence work?", "k": 5}'
 ```
@@ -105,29 +105,29 @@ Self-contained benchmark (docker-compose: Qdrant + indexer + server, fully
 local embeddings, zero API cost) over a Wikipedia corpus —
 see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 
-| corpus | ≈ pages | docs | chunks | indexing time | peak RSS | in Qdrant | retrieval accuracy |
+| corpus | ≈ pages | docs | chunks | indexing time | peak RSS* | in Qdrant | retrieval accuracy |
 |---|---|---|---|---|---|---|---|
-| 100 MB | 52 000 | 12 969 | 66 136 | 8.3 min | 18.0 GB* | 0.6 GB | 5/5 |
-| 1 GB | 524 000 | 240 516 | 836 595 | 88 min | 23.6 GB* | 2.7 GB | 16/20 |
-| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 4.5 h | 35.6 GB* | 7.6 GB | 17/20 |
+| 100 MB | 52 000 | 12 969 | 66 136 | 3.3 min | 11.1 GB | 0.6 GB | 5/5 |
+| 1 GB | 524 000 | 240 516 | 836 595 | 13.7 min | 13.0 GB | 2.2 GB | 19/20 |
+| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 42 min | 15.9 GB | 6.0 GB | 17/20 |
 
-\* **A 30× larger corpus costs 30× the time (throughput is flat at
-~11–12 MB/min) but only ~2× the peak memory.** The floor is 8 Pathway worker
-processes × ~1.5–2 GB of local sentence-transformers stack each (PyTorch
-runtime + model + inference buffers) — set by the worker count, not by data
-volume. The residual growth comes from per-file watch metadata and from the
-in-flight batch buffer during the *initial bulk backfill* (the whole
-pre-existing corpus lands in a few huge commits); in steady-state watching,
-where documents arrive over time, that buffer stays small. Document contents
-never accumulate in the pipeline (`only_metadata`).
+\* **A 30× larger corpus costs ~13× the time but only ~1.4× the peak
+memory — and document *contents* never accumulate in the pipeline**
+(`only_metadata` sources, backpressure-bounded backfill, deterministic
+chunking/embedding stages that the engine does not memoize). The ~11 GB floor
+is 8 Pathway worker processes with a local embedding stack each; the residual
+slope is the engine-side memo of parsed text (needed for deletion semantics)
+plus per-file watch metadata. Persistence is ON (product default): restarts
+resume without re-embedding, at a modest indexing-time cost.
 
 <p align="center">
-  <img src="docs/assets/bench-memory.png" alt="vetosh indexer memory over time while indexing 3GB / 842k documents: RSS stays within a 26-35GB band for the whole 4.5h run while the chunk counter climbs to 2.7M" width="100%">
+  <img src="docs/assets/bench-memory.png" alt="vetosh indexer over a 3GB / 842k-document corpus: the chunk counter climbs linearly to 2.7M while indexer RSS stays in a flat 10-16GB band" width="100%">
 </p>
 
 Setup: 96-core CPU host, streaming mode, 8 worker processes
-(`indexer.workers: 8`), local `all-MiniLM-L6-v2` embeddings (384 dims),
-512-token chunks, Qdrant as the vector store. Retrieval accuracy = distinctive
+(`indexer.workers: 8`), local `static-retrieval-mrl-en-v1` embeddings
+(no API calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant as
+the vector store. Retrieval accuracy = distinctive
 articles sampled from the corpus must come back for their own queries via
 `/api/v1/retrieve`.
 
