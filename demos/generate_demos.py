@@ -83,18 +83,19 @@ T_LINE_H = 30
 
 SCRIPT = [
     ("cmd", "vetosh quickstart"),
-    ("out", "  Step 1: What to generate?   › Universal config", T_OUT),
-    ("out", "  …  Wrote universal config to ./config.yaml", T_OUT),
+    ("out", "  ? Where are your documents?   › ./docs", T_OUT),
+    ("out", "  ? Vector database             › DuckDB (embedded, zero setup)", T_OUT),
+    ("out", "  ? Embeddings                  › local · no API key needed", T_OUT),
+    ("out", "  ✓ Wrote config.yaml", T_OUT),
     ("gap", ""),
-    ("cmd", "vetosh indexer --config config.yaml"),
-    ("out", "  [indexer] watching /data/documents  (fs · only_metadata)", T_OUT),
-    ("out", "  [indexer] parsed 128 docs · embedded 1,544 chunks → pgvector", T_ACCENT),
+    ("cmd", "vetosh up --config config.yaml"),
+    ("out", "  [indexer] watching ./docs  (fs · streaming)", T_OUT),
+    ("out", "  [indexer] parsed 128 docs · embedded 1,544 chunks → duckdb", T_ACCENT),
+    ("out", "  [server]  chat UI + API on http://localhost:8989", T_ACCENT),
     ("gap", ""),
-    ("cmd", "vetosh server --config config.yaml"),
-    ("out", "  INFO  Uvicorn running on http://0.0.0.0:8000", T_OUT),
-    ("gap", ""),
-    ("cmd", "vetosh frontend --config config.yaml"),
-    ("out", "  INFO  Uvicorn running on http://0.0.0.0:3000  →  open in browser", T_ACCENT),
+    ("out", "  # edit a document — the index follows in seconds:", T_OUT),
+    ("cmd", "sed -i 's/129 EUR/199 EUR/' docs/pricing.md"),
+    ("out", "  [indexer] docs/pricing.md changed · re-embedded 3 chunks", T_ACCENT),
 ]
 
 
@@ -205,7 +206,7 @@ def _draw_frontend(composer_text, show_user, typing, answer_chars, show_sources)
     d.line([0, 53, F_W, 53], fill=F_BORDER)
     d.rounded_rectangle([20, 16, 46, 42], radius=8, fill=F_ACCENT)
     d.text((56, 29), "vetosh", font=sans_b, fill=F_TEXT, anchor="lm")
-    d.text((F_W - 20, 29), "API · http://localhost:8000", font=small, fill=F_SOFT, anchor="rm")
+    d.text((F_W - 20, 29), "API · http://localhost:8989 · indexed 2 s ago", font=small, fill=F_SOFT, anchor="rm")
 
     y = 86
     if not show_user:

@@ -106,13 +106,24 @@ see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 | 3 GB | 1 573 000 | 841 890 | 2 703 850 | 15 min | 8.3 GB | 6.0 GB | 16/20 |
 | 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 63 min | 9.7 GB | 20.8 GB | 14/20 |
 
-Documents flow through the pipeline rather than accumulating in it: sources
-are read in metadata-only mode, backfill is backpressure-bounded, parsed-text
-memoization spills to disk. The only memory that scales with the corpus is
-file-watch metadata — measured at 285 bytes per watched file (right-hand
-plot: five runs against the formula), the price of detecting live edits and
-deletions. Everything else is flat: a 100× larger corpus costs 1.3× the
-memory, and packing the same bytes into fewer files removes even that.
+Documents flow through the pipeline rather than accumulating in it, so
+what stays in memory is short and worth spelling out.
+
+**Grows with the corpus — one thing.** The file-watch index: to detect live
+edits and deletions, the indexer keeps a record (path, mtime, size, owner)
+per watched file. Measured cost: **285 bytes per file** — 4 MB for 13k files,
+1 GB for 3.4M (right-hand plot: five runs against the formula). It scales
+with the *number of files*, not bytes: the same 3 GB packed into 85k larger
+files needs 24 MB instead of 240 MB.
+
+**Constant, regardless of corpus size.** The embedding stack (PyTorch
+runtime + model, per worker), the engine baseline (~200 MB per process),
+connector machinery (~0.4 GB), and working buffers that reach a plateau in
+the first minutes of a run and stay there — identical on 3 GB and 10 GB.
+
+**On disk, not in memory.** Parsed-text cache, persistence snapshots, and
+the embeddings themselves (in the vector database). That is why the curves
+plateau: a 100× larger corpus costs 1.3× the memory.
 
 <p align="center">
   <img src="docs/assets/bench-memory.png" alt="Left: indexer PSS over time for 100MB..10GB corpora, all curves plateau at 7-10GB. Right: connector-worker extra memory across five runs matches 285 bytes/file + 398 MB" width="100%">
