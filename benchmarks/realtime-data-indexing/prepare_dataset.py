@@ -21,7 +21,13 @@ import re
 from pathlib import Path
 
 HF_REPO = "wikimedia/wikipedia"
-HF_CONFIG = "20231101.en"
+# Language cascade: English alone tops out around 20 GB of plain text, so
+# larger corpora continue into further languages. Accuracy questions are
+# sampled from the head of the corpus, i.e. always from English.
+HF_CONFIGS = ["20231101.en", "20231101.de", "20231101.fr", "20231101.es", "20231101.it"]
+# Shard the docs tree: N files per subdirectory, so multi-million-file
+# corpora don't create a single pathological directory.
+FILES_PER_DIR = 10_000
 # Sample a question article roughly every N articles, up to a cap.
 QUESTION_EVERY = 2000
 MAX_QUESTIONS = 20
@@ -52,11 +58,12 @@ def main() -> None:
     docs.mkdir(parents=True, exist_ok=True)
 
     target_bytes = args.size_mb * 1024 * 1024
-    shards = sorted(
+    all_files = HfApi().list_repo_files(HF_REPO, repo_type="dataset")
+    shards = [
         f
-        for f in HfApi().list_repo_files(HF_REPO, repo_type="dataset")
-        if f.startswith(f"{HF_CONFIG}/train-")
-    )
+        for cfg in HF_CONFIGS
+        for f in sorted(x for x in all_files if x.startswith(f"{cfg}/train-"))
+    ]
 
     import pyarrow.parquet as pq
 
@@ -76,7 +83,10 @@ def main() -> None:
                 break
             if not text or len(text) < 200:
                 continue
-            name = f"{article_index:07d}-{_slug(title)}.txt"
+            subdir = docs / f"{article_index // FILES_PER_DIR:04d}"
+            if article_index % FILES_PER_DIR == 0:
+                subdir.mkdir(exist_ok=True)
+            name = f"{subdir.name}/{article_index % FILES_PER_DIR:04d}-{_slug(title)}.txt"
             payload = f"{title}\n\n{text}"
             (docs / name).write_text(payload, encoding="utf-8")
             written += len(payload.encode("utf-8"))

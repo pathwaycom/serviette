@@ -1,6 +1,6 @@
 # vetosh — status & roadmap
 
-*Last updated: 2026-07-02.*
+*Last updated: 2026-07-04.*
 
 ## Where we are
 
@@ -58,11 +58,11 @@ actually deletes its vectors — in any of 8 databases — live."*
 
 - The new connectors (duckdb/qdrant/chroma/weaviate/pinecone) need a Pathway
   release that includes them; today vetosh runs against the develop tree.
-- DuckDB is single-writer: a *streaming* indexer excludes a concurrently
-  serving reader process — use `mode: static` with DuckDB, or a client-server
-  backend for live sync.
-- pgvector/Milvus/Chroma/Weaviate/Pinecone targets must be pre-created by the
-  user (dimension mismatch surfaces only at write time).
+- ~~DuckDB single-writer~~ — resolved: `pw.io.duckdb.write` ships
+  `detach_between_batches`; a streaming indexer and the serving process now
+  share the file (verified e2e).
+- ~~targets must be pre-created~~ — resolved: `prepare_backend` creates
+  tables/collections/indexes for all 8 backends at indexer startup.
 
 ---
 
@@ -71,31 +71,34 @@ actually deletes its vectors — in any of 8 databases — live."*
 *Goal: a flawless 5-minute "look what falls out of Pathway connectors for
 free" demo. Polish the first-run experience; make the live-sync magic visible.*
 
-1. ~~**`vetosh up`**~~ — DONE: a dumb supervisor that spawns `vetosh indexer`
-   and `vetosh server` as children simultaneously (uniform streaming for all
-   backends, no refresh loops) and tears both down on exit; if the indexer
-   finishes (static sources) the server keeps serving. DuckDB + streaming
-   currently warns about the single-writer lock — resolves when Pathway ships
-   `detach_between_batches` for `pw.io.duckdb.write` (requested; the vetosh
-   accessor already retries through brief lock windows).
-2. **Bundled demo corpus + script** (`vetosh demo`): sample docs, a scripted
-   moment where a file is edited/deleted and the chat answer visibly changes —
-   that moment *is* the technology pitch.
-3. **Fully local no-key path as the wizard default**: DuckDB +
-   `sentence_transformer` — nothing to sign up for except the free Pathway
-   license.
-4. **docker-compose for the live-sync demo** (qdrant + vetosh services), so
-   the "edit a file, watch the answer change" scene runs on a client-server
-   backend.
-5. **Re-record the README GIF** for the new flow (DuckDB default, new wizard).
-6. **Friendly failure modes**: missing license key, unreachable DB, embedder
-   dimension mismatch — each should produce one clear sentence, not a stack
-   trace. Add `vetosh doctor` (validate config, ping DB, check embedder
-   dimension vs. index).
-7. **Index statistics endpoint** (`/stats`: chunk/document counts, last update
-   time) surfaced in the frontend — makes liveness visible.
-8. **Smoke-test the demo path in CI** so the show never breaks: quickstart →
-   index → retrieve on DuckDB.
+1. ~~**`vetosh up`**~~ — DONE: dumb supervisor, both processes children,
+   uniform streaming for all backends; DuckDB live-serves through
+   `detach_between_batches`.
+2. ~~**Bundled demo corpus + script** (`vetosh demo`)~~ — DONE: Lumina Coffee
+   corpus, zero-to-chat one command, pricing-edit scene verified e2e.
+3. ~~**Fully local no-key path as the wizard default**~~ — DONE: DuckDB +
+   local embeddings first, minimal question path, silent defaults
+   (port 8989, persistence, splitter).
+4. ~~**Re-record the README GIF**~~ — DONE (2026-07-04): quickstart →
+   `vetosh up` → live edit → chat; regenerate with
+   `python demos/generate_demos.py`.
+5. ~~**Index statistics endpoint + frontend liveness**~~ — DONE:
+   `/api/v1/stats` + "indexed N s ago" in the chat header.
+6. **Friendly failure modes + `vetosh doctor`** — REMAINS: validate config,
+   ping DB, check embedder dimension vs index, check parser deps. (Partial:
+   fingerprint diffs, license hints, S3 region validator already done.)
+7. **Smoke-test the demo path in CI** — test written
+   (`tests/test_demo_path.py`), needs a green run + CI wiring.
+
+*(moved to Category 2: docker-compose live-sync demo — no longer a demo
+blocker since DuckDB live-serves; it's now an example deployment.)*
+
+## The showcase rule
+
+vetosh exists to demonstrate the Pathway framework. Every roadmap item must
+state what Pathway/xpack functionality it reuses directly; features that
+would be standalone code written *beside* the framework are flagged ⚠️/❌ and
+held back unless separately justified.
 
 ## Category 2 — before showing to the external world
 
@@ -110,29 +113,53 @@ nothing embarrasses us.*
    must just work.
 4. **Server hardening**: optional API-key auth, CORS config, rate limiting,
    request size limits, timeouts.
-5. **Auto-create targets where possible**: pgvector table (dimension from
-   `BaseEmbedder.get_embedding_dimension()`), Milvus collection, Pinecone
-   index — remove the biggest first-run trap (config promises
-   `embedding_dimension` but nothing consumes it today).
+5. ~~**Auto-create targets**~~ — DONE: `prepare_backend` creates
+   pgvector/Milvus/Chroma/Weaviate/Pinecone/MongoDB targets with the right
+   dimension (config → embedder introspection fallback).
 6. **Observability**: structured logs, `/metrics` (Prometheus), indexing lag
    gauge.
 7. **Streaming `/rag` responses** (SSE) in server + frontend.
 8. **More modalities via config**: `parser:` section exposing Docling
    (PDF+tables+images), ImageParser, AudioParser, PaddleOCR from the xpack.
-9. **S3 / SharePoint / pyfilesystem sources** — `only_metadata` support just
-   landed in Pathway develop (#10483); wire them into `sources:`.
-10. **Optional reranker** (xpack `rerankers`) and hybrid retrieval where the
-    backend supports it.
-11. **Docs site**: per-backend tutorials, troubleshooting, architecture page;
+9. ~~**S3 / SharePoint sources**~~ — DONE: fs/gdrive/s3/sharepoint wired
+   into `sources:` with `only_metadata` + `max_backlog_size`; integration
+   tests against MinIO.
+9b. **docker-compose example deployment** (qdrant + vetosh services) — moved
+   from Category 1.
+10. **Optional reranker** — agreed 2026-07-04: `reranker:` config section,
+    server fetches k×3 candidates, reranks to top-k in `/retrieve`/`/rag`;
+    showcase = benchmark accuracy before/after at identical indexing cost.
+    ⚠️ Showcase check pending: xpack `rerankers` are graph UDFs; verify they
+    are callable standalone in the thin server. If not, this is bespoke
+    code — decide explicitly before building.
+11. **`pyfilesystem` source** — reuses `pw.io.pyfilesystem` (only_metadata):
+    one new `sources:` type = live watch over SFTP/FTP/WebDAV/ZIP. ✅ pure
+    Pathway showcase.
+12. **`/metrics`** — reuses the engine's monitoring HTTP server
+    (`pw.run(with_http_server=True)`), Prometheus format for free. ✅ pure
+    Pathway showcase.
+13. **Change alerts to Slack** — reuses `pw.io.slack` as a second graph
+    output ("N documents re-indexed"); small, sells the streaming nature.
+    ✅ pure Pathway showcase.
+14. **Docs site**: per-backend tutorials, troubleshooting, architecture page;
     CONTRIBUTING + issue templates; choose and state the OSS license clearly.
-12. **CI quality gates**: ruff, mypy, py3.10–3.13 matrix.
+15. **CI quality gates**: ruff, mypy, py3.10–3.13 matrix.
 
 ## Category 3 — after the public prototype
 
-1. **MCP server mode** (`pathway.xpacks.llm.mcp_server`): "chat with your
-   docs from Claude/IDE" — big reach, low effort.
-2. **Adaptive RAG** (geometric context growth, from
-   `AdaptiveRAGQuestionAnswerer`) as an opt-in `/rag` strategy.
+1. **MCP server mode** — ❌ held back by the showcase rule (2026-07-04
+   audit): xpack `McpServer` serves from *inside* a Pathway graph, which
+   contradicts vetosh's decoupled thin server; a FastMCP facade on our
+   server would be standalone code reusing nothing from Pathway. Revisit if
+   the xpack grows a graph-free serving mode, or accept as flagged bespoke.
+2. **Adaptive RAG** as an opt-in `/rag` strategy — reuses the xpack
+   strategy functions (`answer_with_geometric_rag_strategy`) called with our
+   retrieved docs; ✅ xpack reuse (functions, not the graph server).
+2b. **Stream sources** (Kafka/NATS/MQTT via `pw.io.*`) — documents as
+   events; ✅ pure Pathway showcase. **Airbyte source** (`pw.io.airbyte`,
+   hundreds of SaaS sources) — ✅ reuse but operationally heavy.
+2c. **Elasticsearch output** (`pw.io.elasticsearch` + our accessor, same
+   pattern as the existing 8 backends) — ✅ reuse; bridge to hybrid search.
 3. **Evaluation harness** (RAGAS or similar) + per-backend latency/recall
    benchmarks; publish numbers.
 4. **LEANN backend** once its reader path matures (today: write-only,

@@ -138,12 +138,18 @@ def _accuracy(
         )
         resp.raise_for_status()
         results = resp.json()["results"]
-        paths = [Path(r["metadata"].get("path", "")).name for r in results]
-        if q["expected_file"] in paths:
+        # expected_file may carry a subdir ("0001/0042-Title.txt"); match on
+        # the full path suffix, not the basename, to survive sharded corpora.
+        paths = [r["metadata"].get("path", "") for r in results]
+        if any(p.endswith("/" + q["expected_file"]) for p in paths):
             hits += 1
         else:
             misses.append(
-                {"expected": q["expected_file"], "query": q["query"][:120], "got": paths}
+                {
+                    "expected": q["expected_file"],
+                    "query": q["query"][:120],
+                    "got": [str(Path(p).parent.name + "/" + Path(p).name) for p in paths],
+                }
             )
     return hits, len(questions), misses
 
@@ -161,7 +167,7 @@ def main() -> None:
 
     data_root = Path(_os.environ.get("BENCH_DATA_ROOT", ROOT / "datasets"))
     dataset = data_root / args.size
-    docs_count = len(list((dataset / "docs").glob("*.txt")))
+    docs_count = sum(1 for _ in (dataset / "docs").rglob("*.txt"))
     questions = json.loads((dataset / "questions.json").read_text())
     results_dir = ROOT / "results"
     results_dir.mkdir(exist_ok=True)
@@ -298,7 +304,7 @@ def main() -> None:
     peak_mb = max(s[1] for s in samples) / 1024 if samples else 0.0
     peak_pss_mb = max(s[3] for s in samples) / 1024 if samples else 0.0
     size_mb = sum(
-        f.stat().st_size for f in (dataset / "docs").glob("*.txt")
+        f.stat().st_size for f in (dataset / "docs").rglob("*.txt")
     ) / 1024 / 1024
     summary = {
         "dataset": args.size,
