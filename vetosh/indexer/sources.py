@@ -17,8 +17,9 @@ parse UDF. Today that is:
   downloaded by server-relative path via the same certificate-authenticated
   ``office365`` client.
 
-pyfilesystem gained ``only_metadata`` in the same Pathway change and slots in
-here (a ``read_source`` branch + a fetcher) next.
+- **pyfilesystem** — ``pw.io.pyfilesystem.read(format="only_metadata")``;
+  anything the PyFilesystem library opens (FTP, SFTP, WebDAV, ZIP/TAR,
+  ``osfs://``, ``mem://``); bytes re-read from the same filesystem by path.
 
 Each source type provides a :class:`Fetcher` that turns a metadata dict into
 ``(bytes, suffix)`` for the parser. The fetcher is what makes the parse step
@@ -79,6 +80,18 @@ def read_source(src, name: str) -> pw.Table:
                 with_path_style=src.with_path_style,
             ),
             mode=src.mode,
+            max_backlog_size=src.max_backlog_size,
+            name=name,
+        )
+    if src.type == "pyfilesystem":
+        from fs import open_fs
+
+        return pw.io.pyfilesystem.read(
+            open_fs(src.fs_url),
+            path=src.path,
+            format="only_metadata",
+            mode=src.mode,
+            refresh_interval=float(src.refresh_interval),
             max_backlog_size=src.max_backlog_size,
             name=name,
         )
@@ -236,6 +249,34 @@ class SharePointFetcher:
         return download(path), Path(path).suffix
 
 
+class PyFilesystemFetcher:
+    """Read bytes back from the PyFilesystem source by in-filesystem path.
+
+    A separate ``open_fs`` handle is created lazily per process (parse UDFs
+    run in every worker); PyFilesystem FS objects are thread-safe.
+    ``fs_factory`` is injectable for tests.
+    """
+
+    def __init__(self, src, fs_factory: Callable[[], Any] | None = None) -> None:
+        self._src = src
+        self._fs_factory = fs_factory
+        self._fs = None
+
+    def _ensure_fs(self):
+        if self._fs is None:
+            if self._fs_factory is not None:
+                self._fs = self._fs_factory()
+            else:
+                from fs import open_fs
+
+                self._fs = open_fs(self._src.fs_url)
+        return self._fs
+
+    def fetch(self, metadata: dict[str, Any]) -> tuple[bytes, str]:
+        path = metadata["path"]
+        return self._ensure_fs().readbytes(path), Path(path).suffix
+
+
 def make_fetcher(src) -> Fetcher:
     if src.type == "fs":
         return FsFetcher()
@@ -245,4 +286,6 @@ def make_fetcher(src) -> Fetcher:
         return S3Fetcher(src)
     if src.type == "sharepoint":
         return SharePointFetcher(src)
+    if src.type == "pyfilesystem":
+        return PyFilesystemFetcher(src)
     raise ValueError(f"Unsupported source type: {src.type!r}")  # pragma: no cover

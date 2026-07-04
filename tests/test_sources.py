@@ -176,3 +176,37 @@ def test_monitoring_http_port_config():
         IndexerConfig(monitoring_http_port=0)
     with pytest.raises(ValidationError):
         IndexerConfig(monitoring_http_port=70000)
+
+
+def test_pyfilesystem_source_validates():
+    from vetosh.config.schema import PyFilesystemSource
+
+    src = PyFilesystemSource(fs_url="ftp://user:pw@host/dir")
+    assert src.path == "" and src.mode == "streaming"
+    assert src.refresh_interval == 30 and src.max_backlog_size == 1000
+    config = VetoshConfig.model_validate(
+        {
+            "sources": [{"type": "pyfilesystem", "fs_url": "zip://docs.zip", "path": "a"}],
+            "vector_db": {"type": "duckdb", "path": "x.duckdb"},
+            "embedder": {"type": "mock"},
+        }
+    )
+    assert config.sources[0].fs_url == "zip://docs.zip"
+
+
+def test_pyfilesystem_fetcher_reads_bytes_and_suffix():
+    import fs as pyfs
+
+    from vetosh.config.schema import PyFilesystemSource
+    from vetosh.indexer.sources import PyFilesystemFetcher, make_fetcher
+
+    mem = pyfs.open_fs("mem://")
+    mem.makedirs("docs")
+    mem.writebytes("docs/report.pdf", b"%PDF fake")
+
+    src = PyFilesystemSource(fs_url="mem://")
+    fetcher = PyFilesystemFetcher(src, fs_factory=lambda: mem)
+    contents, suffix = fetcher.fetch({"path": "docs/report.pdf"})
+    assert contents == b"%PDF fake" and suffix == ".pdf"
+
+    assert isinstance(make_fetcher(src), PyFilesystemFetcher)

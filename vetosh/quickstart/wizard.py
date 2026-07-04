@@ -38,13 +38,13 @@ EMBEDDER_LABELS = [
 ]
 
 # Document source types offered by the wizard. Only sources with an
-# only_metadata read mode are supported. SharePoint slots in here (+ a branch
-# in Wizard._collect_source) once vetosh wires its fetcher.
+# only_metadata read mode are supported.
 SOURCE_TYPES: list[tuple[str, str]] = [
     ("fs", "Filesystem (local directory)"),
     ("gdrive", "Google Drive"),
     ("s3", "S3 / MinIO / S3-compatible bucket"),
     ("sharepoint", "Microsoft SharePoint"),
+    ("pyfilesystem", "FTP / SFTP / WebDAV / ZIP (PyFilesystem URL)"),
 ]
 
 # Default environment-variable references per provider, so generated configs
@@ -458,7 +458,15 @@ class Wizard:
                 "thumbprint": self.p.text("Certificate thumbprint", required=True),
                 "root_path": self.p.text("Root path to index (e.g. Shared Documents)", required=True),
             }
-        # Future source types (pyfilesystem) branch here.
+        if stype == "pyfilesystem":
+            return {
+                "type": "pyfilesystem",
+                "fs_url": self.p.text(
+                    'Filesystem URL (e.g. "ftp://user:pass@host/dir", "zip://./docs.zip")',
+                    required=True,
+                ),
+                "path": self.p.text("Path inside it to index", default=""),
+            }
         raise ValueError(f"Unsupported source type: {stype!r}")  # pragma: no cover
 
     # -- the full flow -------------------------------------------------------

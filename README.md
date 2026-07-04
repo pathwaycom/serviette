@@ -49,8 +49,9 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
   are reflected in the vector DB in real time — whatever you change is
   answerable seconds later. Documents flow through the pipeline instead of
   accumulating in it, so a large corpus stays small in memory.
-- **Multiple sources.** Local filesystem, Google Drive, S3/MinIO and
-  SharePoint — all watched live, mixed freely in one config.
+- **Multiple sources.** Local filesystem, Google Drive, S3/MinIO, SharePoint
+  — plus anything the PyFilesystem library opens: FTP, SFTP, WebDAV, even ZIP
+  archives. All watched live, mixed freely in one config.
 - **Reuses Pathway's LLM xpack.** Parsers, splitters and embedders are used
   as-is — vetosh implements none of its own. Five embedder families (OpenAI,
   LiteLLM, SentenceTransformers, Gemini, Bedrock) work identically on the

@@ -150,7 +150,7 @@ def test_wizard_run_collects_multiple_sources():
         "2",                       # config type: indexer only
         "1", "/data/a",            # source 1: filesystem (glob is YAML-only now)
         "1", "/data/b",            # source 2: filesystem
-        "5",                       # add another? -> Done
+        "6",                       # add another? -> Done
         "2",                       # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",   # pg connection string
         "",                        # collection (default)
@@ -180,7 +180,7 @@ def test_wizard_run_collects_gdrive_source():
         "drive-folder-id",          # gdrive object id
         "./creds.json",             # credentials file
         "*.pdf",                    # file name pattern
-        "5",                        # add another? -> Done (fs, gdrive, s3, sharepoint, done)
+        "6",                        # add another? -> Done (fs, gdrive, s3, sharepoint, pyfilesystem, done)
         "2",                        # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",
         "",                         # collection default
@@ -210,7 +210,7 @@ def test_wizard_duckdb_happy_path_is_minimal(tmp_path, monkeypatch):
     tokens = [
         "2",            # config type: indexer only
         "1", "/data/a",  # one filesystem source
-        "5",            # done
+        "6",            # done
         "1",            # vector db: duckdb -> defaults, no questions
         "1",            # embedder: local sentence_transformer -> no questions
         "K",            # license key

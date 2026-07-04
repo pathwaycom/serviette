@@ -15,15 +15,17 @@
   <!-- ============ sources ============ -->
   <rect x="30" y="70" width="190" height="210" rx="10" fill="#ffffff" stroke="#d9dce1"/>
   <text x="125" y="98" text-anchor="middle" font-size="15" font-weight="650" fill="#1f2328">Sources</text>
-  <g font-size="12.5" fill="#1f2328" text-anchor="middle">
-    <rect x="50" y="112" width="150" height="27" rx="6" fill="#eef0f4"/>
-    <text x="125" y="130">Filesystem</text>
-    <rect x="50" y="147" width="150" height="27" rx="6" fill="#eef0f4"/>
-    <text x="125" y="165">Google Drive</text>
-    <rect x="50" y="182" width="150" height="27" rx="6" fill="#eef0f4"/>
-    <text x="125" y="200">S3 / MinIO</text>
-    <rect x="50" y="217" width="150" height="27" rx="6" fill="#eef0f4"/>
-    <text x="125" y="235">SharePoint</text>
+  <g font-size="12" fill="#1f2328" text-anchor="middle">
+    <rect x="50" y="108" width="150" height="25" rx="6" fill="#eef0f4"/>
+    <text x="125" y="125">Filesystem</text>
+    <rect x="50" y="139" width="150" height="25" rx="6" fill="#eef0f4"/>
+    <text x="125" y="156">Google Drive</text>
+    <rect x="50" y="170" width="150" height="25" rx="6" fill="#eef0f4"/>
+    <text x="125" y="187">S3 / MinIO</text>
+    <rect x="50" y="201" width="150" height="25" rx="6" fill="#eef0f4"/>
+    <text x="125" y="218">SharePoint</text>
+    <rect x="50" y="232" width="150" height="25" rx="6" fill="#eef0f4"/>
+    <text x="125" y="249">FTP / WebDAV / ZIP</text>
   </g>
   <text x="125" y="266" text-anchor="middle" font-size="11" fill="#57606a">watched · mixed freely</text>
 
@@ -47,19 +49,19 @@
     <text x="546" y="131">embed</text>
   </g>
   <g font-size="11.5" fill="#57606a">
-    <text x="290" y="166">• metadata-only watch: paths in the pipeline, never bytes</text>
+    <text x="290" y="166">• watches metadata only: paths, never file bytes</text>
     <text x="290" y="188">• persistence: unchanged docs never re-embedded</text>
-    <text x="290" y="210">• parsers / splitters / embedders from the Pathway LLM xpack</text>
+    <text x="290" y="210">• parse/split/embed via the Pathway LLM xpack</text>
     <text x="290" y="232">• edits &amp; deletions flow as native retractions</text>
   </g>
   <text x="425" y="264" text-anchor="middle" font-size="11" fill="#57606a">separate process — write path only</text>
 
   <!-- indexer -> db -->
   <line x1="580" y1="175" x2="678" y2="175" stroke="#6b7280" stroke-width="1.6" marker-end="url(#arrow)"/>
-  <text x="629" y="152" text-anchor="middle" font-size="10.5" fill="#57606a">native connectors</text>
+  <text x="629" y="152" text-anchor="middle" font-size="10.5" fill="#57606a">Pathway native</text>
   <text x="629" y="165" text-anchor="middle" font-size="10.5" fill="#57606a">connectors</text>
-  <text x="629" y="196" text-anchor="middle" font-size="10.5" fill="#57606a">snapshot mode:</text>
-  <text x="629" y="209" text-anchor="middle" font-size="10.5" fill="#57606a">real upserts/deletes</text>
+  <text x="629" y="196" text-anchor="middle" font-size="10.5" fill="#57606a">upserts &amp;</text>
+  <text x="629" y="209" text-anchor="middle" font-size="10.5" fill="#57606a">deletes</text>
 
   <!-- ============ vector database ============ -->
   <rect x="680" y="70" width="270" height="210" rx="10" fill="#ffffff" stroke="#d9dce1"/>

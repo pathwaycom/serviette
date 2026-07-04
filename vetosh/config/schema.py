@@ -131,8 +131,29 @@ class SharePointSource(BaseModel):
     mode: Literal["streaming", "static"] = "streaming"
 
 
+class PyFilesystemSource(BaseModel):
+    """Any filesystem PyFilesystem can open, watched in ``only_metadata``
+    mode: FTP, SFTP/SSH, WebDAV, ZIP/TAR archives, in-memory and more —
+    the ``fs_url`` (e.g. ``"ftp://user:pass@host/dir"``, ``"zip://docs.zip"``)
+    selects the driver. Requires the ``vetosh[pyfilesystem]`` extra; some
+    protocols need their own driver package (``fs.sshfs``, ``fs.webdavfs``).
+    Credentials belong in the URL via ``${ENV_VAR}`` interpolation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["pyfilesystem"] = "pyfilesystem"
+    fs_url: str
+    # Path inside the opened filesystem ("" = its root), scanned recursively.
+    path: str = ""
+    mode: Literal["streaming", "static"] = "streaming"
+    # Seconds between scans in streaming mode.
+    refresh_interval: float = 30.0
+    # See FsSource.max_backlog_size.
+    max_backlog_size: int | None = 1000
+
+
 Source = Annotated[
-    Union[FsSource, GDriveSource, S3Source, SharePointSource],
+    Union[FsSource, GDriveSource, S3Source, SharePointSource, PyFilesystemSource],
     Field(discriminator="type"),
 ]
 

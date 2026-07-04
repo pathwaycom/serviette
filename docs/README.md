@@ -152,6 +152,9 @@ hardcoded.
 | **sharepoint** `sources[].cert_path` / `.thumbprint` | str | — (required) | indexer | Certificate .pem and its thumbprint. |
 | **sharepoint** `sources[].root_path` | str | — (required) | indexer | Directory/file to index. |
 | **sharepoint** `sources[].recursive` | bool | `true` | indexer | Scan nested directories. |
+| **pyfilesystem** `sources[].fs_url` | str | — (required) | indexer | Any PyFilesystem URL: `ftp://…`, `ssh://…`, `webdav://…`, `zip://…`, `osfs://…` (extra: `vetosh[pyfilesystem]`; some protocols need a driver package). |
+| **pyfilesystem** `sources[].path` | str | `""` | indexer | Path inside the opened filesystem (recursive). |
+| **pyfilesystem** `sources[].refresh_interval` | float | `30.0` | indexer | Seconds between scans (streaming mode). |
 | **sharepoint** `sources[].refresh_interval` | int | `30` | indexer | Polling period, seconds. |
 | `vector_db.type` | `duckdb`\|`pgvector`\|`milvus`\|`qdrant`\|`chroma`\|`weaviate`\|`pinecone`\|`mongodb` | — (required) | both | Vector database backend (see [Backends](#vector-database-backends)). |
 | **duckdb** `vector_db.path` | str | — (required) | both | Path to the DuckDB database file. |

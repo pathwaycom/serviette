@@ -37,6 +37,8 @@ openai = ["openai>=1.0"]
 gdrive = ["google-api-python-client>=2.0", "google-auth>=2.0"]
 # S3 needs no extra: boto3 ships with pathway.
 sharepoint = ["Office365-REST-Python-Client>=2.5"]
+# FTP/SFTP/WebDAV/ZIP and more via the PyFilesystem2 library.
+pyfilesystem = ["fs>=2.4"]
 # One extra per vector-DB backend — install only what you use.
 pgvector = ["asyncpg>=0.29"]
 milvus = ["pymilvus>=2.4"]

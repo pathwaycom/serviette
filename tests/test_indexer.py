@@ -211,3 +211,37 @@ def test_monitoring_endpoints_serve_prometheus(tmp_path, tcp_port):
     finally:
         proc.terminate()
         proc.wait(timeout=30)
+
+def test_pyfilesystem_source_end_to_end(tmp_path):
+    """Index a directory through the pyfilesystem connector (osfs://)."""
+    import duckdb
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "a.txt").write_text("cats purr in the yard")
+    (docs / "b.txt").write_text("dogs bark at the postman")
+    config = {
+        "sources": [
+            {
+                "type": "pyfilesystem",
+                "fs_url": f"osfs://{docs}",
+                "mode": "static",
+            }
+        ],
+        "vector_db": {
+            "type": "duckdb",
+            "path": str(tmp_path / "e.duckdb"),
+            "table": "embeddings",
+        },
+        "embedder": {"type": "mock"},
+        "persistence": {"enabled": False},
+    }
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(yaml.safe_dump(config))
+    _run_pass(cfg_path)
+
+    conn = duckdb.connect(str(tmp_path / "e.duckdb"), read_only=True)
+    paths = {r[0] for r in conn.execute(
+        "SELECT json_extract_string(metadata, '$.path') FROM embeddings"
+    ).fetchall()}
+    assert paths == {"a.txt", "b.txt"}

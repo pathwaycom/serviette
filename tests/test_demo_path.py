@@ -54,7 +54,7 @@ def test_demo_path_smoke(tmp_path, tcp_port, monkeypatch):
         [
             "1",            # universal config
             "1", str(docs),  # one filesystem source
-            "5",            # done
+            "6",            # done
             "1",            # vector db: duckdb (silent defaults)
             "1",            # embedder: local (no further questions)
             "",             # enable /rag? -> No
