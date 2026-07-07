@@ -210,3 +210,92 @@ def test_pyfilesystem_fetcher_reads_bytes_and_suffix():
     assert contents == b"%PDF fake" and suffix == ".pdf"
 
     assert isinstance(make_fetcher(src), PyFilesystemFetcher)
+
+
+def _registry(rules=None, env=None, importable=frozenset(), monkeypatch=None):
+    """ParserRegistry with a controlled environment for routing tests."""
+    import vetosh.indexer.graph as graph_mod
+
+    registry = graph_mod.ParserRegistry(rules)
+    registry._importable = staticmethod(lambda module: module in importable)  # type: ignore[method-assign]
+    return registry
+
+
+def test_parser_defaults_prefer_best_keyless(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TWELVELABS_API_KEY", raising=False)
+
+    # Everything installed: docling wins for pdf, paddle for images.
+    reg = _registry(importable={"docling", "paddleocr"})
+    assert reg._route(".pdf", "a.pdf")[0] == "docling"
+    assert reg._route(".png", "scan.png")[0] == "paddle_ocr"
+    assert reg._route(".txt", "a.txt")[0] == "utf8"
+    assert reg._route(".docx", "a.docx")[0] == "unstructured"
+    # Key-requiring modalities are skipped without their keys.
+    assert reg._route(".mp3", "a.mp3")[0] == "skip"
+    assert reg._route(".mp4", "a.mp4")[0] == "skip"
+
+    # Nothing optional installed: pdf falls back to pypdf, images skip.
+    reg = _registry(importable=set())
+    assert reg._route(".pdf", "a.pdf")[0] == "pypdf"
+    assert reg._route(".png", "scan.png")[0] == "skip"
+
+
+def test_parser_defaults_enable_keyed_modalities_with_keys(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("TWELVELABS_API_KEY", "k")
+    reg = _registry()
+    assert reg._route(".wav", "call.wav")[0] == "whisper"
+    assert reg._route(".mp4", "demo.mp4")[0] == "twelvelabs_video"
+
+
+def test_parser_user_rules_win_and_fall_through(monkeypatch):
+    from vetosh.config.schema import ParserRule
+
+    monkeypatch.delenv("TWELVELABS_API_KEY", raising=False)
+    rules = [
+        ParserRule(match=["*.pdf"], type="pypdf"),
+        ParserRule(
+            match=["*.mp4"], type="twelvelabs_video", options={"prompt": "Describe"}
+        ),
+    ]
+    reg = _registry(rules, importable={"docling"})
+    # Explicit rule beats the docling default.
+    assert reg._route(".pdf", "a.pdf")[0] == "pypdf"
+    # Explicit rule enables video even without the env key (key in options/env at runtime).
+    kind, options = reg._route(".mp4", "demo.mp4")
+    assert kind == "twelvelabs_video" and options["prompt"] == "Describe"
+    # Unmatched files fall through to defaults.
+    assert reg._route(".txt", "a.txt")[0] == "utf8"
+
+
+def test_parser_skip_produces_empty_text(monkeypatch, caplog):
+    monkeypatch.delenv("TWELVELABS_API_KEY", raising=False)
+    reg = _registry()
+    assert reg.parse(b"\x00fakevideo", ".mp4", "demo.mp4") == ""
+    assert any("Skipping" in r.message for r in caplog.records)
+
+
+def test_parser_rules_in_fingerprint_without_credentials(monkeypatch):
+    from vetosh.indexer.fingerprint import build_fingerprint
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TWELVELABS_API_KEY", raising=False)
+    config = VetoshConfig.model_validate(
+        {
+            "sources": [{"type": "fs", "path": "./docs"}],
+            "vector_db": {"type": "duckdb", "path": "x.duckdb"},
+            "embedder": {"type": "mock"},
+            "parser": [
+                {
+                    "match": ["*.mp4"],
+                    "type": "twelvelabs_video",
+                    "options": {"prompt": "P", "api_key": "SECRET"},
+                }
+            ],
+        }
+    )
+    fp = build_fingerprint(config)
+    dumped = str(fp["parser"])
+    assert "twelvelabs_video" in dumped and "P" in dumped
+    assert "SECRET" not in dumped

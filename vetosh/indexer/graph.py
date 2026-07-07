@@ -32,6 +32,7 @@ disables the parse cache (every restart re-fetches and re-parses).
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import hashlib
 import inspect
 import os
@@ -72,40 +73,141 @@ def _json_to_dict(value: Any) -> dict[str, Any]:
 
 
 class ParserRegistry:
-    """Lazily-built, extension-dispatched xpack parsers.
+    """Rule-based, extension-dispatched xpack parsers.
 
-    We never implement our own parsing: each file is handed to the appropriate
-    ``pathway.xpacks.llm.parsers`` class. Parsers expose their logic via
-    ``__wrapped__(contents)`` returning ``list[(text, metadata)]``; some are
-    async, which we drive to completion here so the enclosing UDF stays sync.
+    We never implement our own parsing: each file is handed to the matching
+    ``pathway.xpacks.llm.parsers`` class. User rules (``parser:`` config) are
+    checked first; built-in defaults cover the rest with a keyless-first
+    policy — every format is enabled out of the box, routed to the best
+    parser that needs no API key, and a modality whose only parser requires
+    an absent key (audio -> OpenAI Whisper, video -> TwelveLabs) is skipped
+    with a warning instead of failing the pipeline.
+
+    Parsers expose their logic via ``__wrapped__(contents)`` returning
+    ``list[(text, metadata)]``; some are async, which we drive to completion
+    here so the enclosing UDF stays sync.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[str, Any] = {}
+    _SUFFIXES: dict[str, set[str]] = {
+        "text": {".txt", ".md", ".markdown", ".text", ""},
+        "pdf": {".pdf"},
+        "image": {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"},
+        "audio": {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac"},
+        "video": {".mp4", ".webm", ".mov", ".mkv", ".avi"},
+        # everything else -> office/unstructured
+    }
 
-    def _get(self, kind: str):
-        if kind not in self._cache:
-            from pathway.xpacks.llm import parsers
+    def __init__(self, rules: list | None = None) -> None:
+        self._rules = list(rules or [])
+        self._instances: dict[Any, Any] = {}
+        self._defaults: dict[str, tuple[str, dict]] = {}
+        self._warned: set[str] = set()
 
-            if kind == "pdf":
-                self._cache[kind] = parsers.PypdfParser()
-            elif kind == "text":
-                self._cache[kind] = parsers.Utf8Parser()
-            else:  # everything else -> unstructured (DOCX/HTML/PPTX/EML/...)
-                self._cache[kind] = parsers.UnstructuredParser()
-        return self._cache[kind]
+    # -- keyless-first defaults ------------------------------------------------
 
     @staticmethod
-    def _kind_for(suffix: str) -> str:
-        suffix = suffix.lower()
-        if suffix == ".pdf":
-            return "pdf"
-        if suffix in {".txt", ".md", ".markdown", ".text", ""}:
-            return "text"
-        return "unstructured"
+    def _importable(module: str) -> bool:
+        import importlib.util
 
-    def parse(self, contents: bytes, suffix: str) -> str:
-        parser = self._get(self._kind_for(suffix))
+        return importlib.util.find_spec(module) is not None
+
+    def _default_for(self, modality: str) -> tuple[str, dict]:
+        """Resolve the default (parser type, options) for a modality.
+
+        Preference order per modality: the best parser that runs without an
+        API key; a key-requiring parser only when its key is already present
+        in the environment; otherwise ``skip``.
+        """
+        if modality not in self._defaults:
+            kind: tuple[str, dict]
+            if modality == "text":
+                kind = ("utf8", {})
+            elif modality == "pdf":
+                # Best keyless first: docling (layout + tables) over pypdf.
+                kind = ("docling", {}) if self._importable("docling") else ("pypdf", {})
+            elif modality == "image":
+                # PaddleOCR is local/keyless; vision parsers need an API key
+                # and are opt-in via explicit rules.
+                if self._importable("paddleocr"):
+                    kind = ("paddle_ocr", {})
+                else:
+                    kind = ("skip", {"reason": "images: install vetosh[ocr] or configure vision_image"})
+            elif modality == "audio":
+                if os.environ.get("OPENAI_API_KEY"):
+                    kind = ("whisper", {})
+                else:
+                    kind = ("skip", {"reason": "audio: OPENAI_API_KEY not set (Whisper API)"})
+            elif modality == "video":
+                if os.environ.get("TWELVELABS_API_KEY"):
+                    kind = ("twelvelabs_video", {})
+                else:
+                    kind = ("skip", {"reason": "video: TWELVELABS_API_KEY not set"})
+            else:
+                kind = ("unstructured", {})
+            self._defaults[modality] = kind
+        return self._defaults[modality]
+
+    def resolved_rules(self) -> list[dict]:
+        """Full routing picture (user rules + resolved defaults) for the
+        persistence fingerprint and logs. Credentials are never included."""
+
+        resolved = [
+            {
+                "match": r.match,
+                "type": r.type,
+                "options": {k: v for k, v in r.options.items() if "key" not in k.lower()},
+            }
+            for r in self._rules
+        ]
+        for modality in ["text", "pdf", "image", "audio", "video", "office"]:
+            kind, options = self._default_for(modality)
+            resolved.append({"match": [f"<default:{modality}>"], "type": kind, "options": options})
+        return resolved
+
+    # -- dispatch ---------------------------------------------------------------
+
+    def _modality_for(self, suffix: str) -> str:
+        suffix = suffix.lower()
+        for modality, suffixes in self._SUFFIXES.items():
+            if suffix in suffixes:
+                return modality
+        return "office"
+
+    def _route(self, suffix: str, name: str) -> tuple[str, dict]:
+        for rule in self._rules:
+            if any(fnmatch.fnmatch(name or f"x{suffix}", pat) for pat in rule.match):
+                return rule.type, dict(rule.options)
+        return self._default_for(self._modality_for(suffix))
+
+    def _get(self, kind: str, options: dict):
+        key = (kind, tuple(sorted(options.items())))
+        if key not in self._instances:
+            from pathway.xpacks.llm import parsers
+
+            classes = {
+                "utf8": parsers.Utf8Parser,
+                "pypdf": parsers.PypdfParser,
+                "docling": parsers.DoclingParser,
+                "unstructured": parsers.UnstructuredParser,
+                "paddle_ocr": parsers.PaddleOCRParser,
+                "vision_image": parsers.ImageParser,
+                "vision_slide": parsers.SlideParser,
+                "whisper": parsers.AudioParser,
+                "twelvelabs_video": parsers.TwelveLabsVideoParser,
+            }
+            self._instances[key] = classes[kind](**options)
+        return self._instances[key]
+
+    def parse(self, contents: bytes, suffix: str, name: str = "") -> str:
+        kind, options = self._route(suffix, name)
+        if kind == "skip":
+            reason = options.get("reason", "no parser configured")
+            if reason not in self._warned:
+                self._warned.add(reason)
+                logger.warning("Skipping %r files — %s", suffix, reason)
+            return ""
+        options.pop("reason", None)
+        parser = self._get(kind, options)
         result = parser.__wrapped__(contents)
         if inspect.isawaitable(result):
             result = asyncio.run(result)
@@ -204,7 +306,7 @@ def build_graph(
 
     config.for_indexer()
 
-    registry = ParserRegistry()
+    registry = ParserRegistry(config.parser)
     splitter = splitter if splitter is not None else build_xpack_splitter(config.splitter)
     embedder = embedder if embedder is not None else build_xpack_embedder(config.embedder)
 
@@ -226,7 +328,7 @@ def build_graph(
             except Exception as exc:  # noqa: BLE001 - object may have vanished / be unreadable
                 logger.warning("Could not fetch source object %s: %s", meta, exc)
                 return ""
-            return registry.parse(contents, suffix)
+            return registry.parse(contents, suffix, str(meta.get("name", "")))
 
         return parse_document
 

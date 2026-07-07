@@ -52,6 +52,11 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
 - **Multiple sources.** Local filesystem, Google Drive, S3/MinIO, SharePoint
   — plus anything the PyFilesystem library opens: FTP, SFTP, WebDAV, even ZIP
   archives. All watched live, mixed freely in one config.
+- **Multimodal out of the box.** Text, Office documents, PDFs (with tables
+  and layout), scanned images — and, with the corresponding API keys, audio
+  recordings and even video. Every format is on by default and routed to the
+  best parser that needs no API key; drop a file in the folder and it is
+  answerable like any document. See [Multimodality](#multimodality).
 - **Reuses Pathway's LLM xpack.** Parsers, splitters and embedders are used
   as-is — vetosh implements none of its own. Five embedder families (OpenAI,
   LiteLLM, SentenceTransformers, Gemini, Bedrock) work identically on the
@@ -170,6 +175,32 @@ anarchism"), not a lost document — the pipeline indexed 100% of the corpus in
 every run. Swap one config line for a stronger embedder and the accuracy
 ceiling lifts with it, at proportional embedding cost; the engine numbers —
 memory and everything outside embedding time — stay as measured.
+
+## Multimodality
+
+Every file type is enabled by default. vetosh routes each file to the best
+parser that works **without an API key**, and turns on key-requiring
+modalities automatically when their key is present:
+
+| format | parsed by default with | notes |
+|---|---|---|
+| text / Markdown | as-is | |
+| PDF | Docling — layout-aware, tables (falls back to pypdf) | local, free |
+| Office (DOCX, PPTX, XLSX, HTML, EML, EPUB…) | Unstructured | local, free |
+| scanned images (PNG, JPG, TIFF…) | PaddleOCR | local, free |
+| audio (MP3, WAV…) | Whisper | when `OPENAI_API_KEY` is set |
+| video (MP4, WebM, MOV…) | TwelveLabs Pegasus — a searchable text description of the video | when `TWELVELABS_API_KEY` is set |
+
+A modality whose only parser needs an absent key is skipped with a clear
+warning — never a crash. Everything stays live: drop a recording of
+yesterday's meeting into the watched folder and ask about it minutes later;
+expensive parses (video) are cached on disk, so restarts cost nothing.
+
+The routing is configurable per file pattern (`parser:` section — pick a
+vision model for images instead of OCR, set a custom video prompt); see
+[docs](docs/README.md). Embeddings work the same for every modality: parsed
+content is text, so any of the embedder families — including the local
+credential-free default — covers a multimodal corpus.
 
 ## Observability
 

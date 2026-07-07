@@ -55,6 +55,16 @@ _RISKS = {
         "documents nonsensically. Re-indexing from scratch is strongly "
         "recommended."
     ),
+    "parser": (
+        "Documents indexed before this change were parsed with the OLD "
+        "routing (e.g. a different PDF parser or video prompt), so their "
+        "text — and therefore their chunks and vectors — may differ from "
+        "what the NEW routing would produce. Edits/deletions of such "
+        "documents can leave orphaned vectors. If the affected formats "
+        "matter, re-index from scratch; note that defaults also resolve "
+        "from the environment (installed parser packages, API keys "
+        "present), so this can change without touching the config."
+    ),
     "libraries": (
         "A library upgrade can change tokenization and therefore chunk "
         "boundaries — with the same orphaned-vectors risk as a splitter "
@@ -74,8 +84,11 @@ def _library_version(module: str) -> str | None:
 
 def build_fingerprint(config: VetoshConfig) -> dict[str, Any]:
     embedder = config.embedder.model_dump() if config.embedder else {}
+    from vetosh.indexer.graph import ParserRegistry
+
     return {
         "splitter": config.splitter.model_dump(),
+        "parser": ParserRegistry(config.parser).resolved_rules(),
         "embedder": {
             # Identity only — never credentials.
             "type": embedder.get("type"),

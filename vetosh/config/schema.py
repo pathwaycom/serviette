@@ -152,6 +152,32 @@ class PyFilesystemSource(BaseModel):
     max_backlog_size: int | None = 1000
 
 
+class ParserRule(BaseModel):
+    """One routing rule of the ``parser:`` section: files whose names match
+    any of the ``match`` globs are parsed by ``type``. Rules are checked in
+    order, first match wins; built-in keyless-first defaults cover whatever
+    the user rules don't. ``options`` are forwarded to the parser constructor
+    (e.g. ``prompt`` for twelvelabs_video, ``model``/``api_key`` for
+    whisper); ``${ENV_VAR}`` interpolation applies as everywhere."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    match: list[str] = Field(min_length=1)
+    type: Literal[
+        "utf8",
+        "pypdf",
+        "docling",
+        "unstructured",
+        "paddle_ocr",
+        "vision_image",
+        "vision_slide",
+        "whisper",
+        "twelvelabs_video",
+        "skip",
+    ]
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
 Source = Annotated[
     Union[FsSource, GDriveSource, S3Source, SharePointSource, PyFilesystemSource],
     Field(discriminator="type"),
@@ -462,6 +488,11 @@ class VetoshConfig(BaseModel):
     vector_db: VectorDBConfig | None = None
     embedder: EmbedderConfig | None = None
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
+    # Optional parser routing rules (see ParserRule). None: built-in defaults
+    # cover every modality, preferring keyless local parsers (best available:
+    # docling > pypdf for PDF, PaddleOCR for images) and skipping modalities
+    # whose only parser needs an absent API key (audio, video) with a warning.
+    parser: list[ParserRule] | None = None
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
 
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
