@@ -679,8 +679,8 @@ def run_indexer(
     build_graph(config, **build_kwargs)
     run_kwargs: dict[str, Any] = {}
     if config.indexer.udf_cache_directory:
-        # Spill the non-deterministic UDF memo (parsed texts) to SQLite on
-        # disk instead of RAM (Pathway feature; ignored on older builds with
+        # Spill the non-deterministic UDF memo (parsed texts) to disk
+        # instead of RAM (Pathway feature; ignored on older builds with
         # a warning so configs stay portable).
         if "udf_cache_directory" in inspect.signature(pw.run).parameters:
             run_kwargs["udf_cache_directory"] = config.indexer.udf_cache_directory

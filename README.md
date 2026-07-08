@@ -256,7 +256,7 @@ every commit. From-scratch setup on a fresh machine:
 # 0. Prerequisites: Python >= 3.10 (3.12 recommended) and git.
 
 # 1. vetosh in its own virtualenv
-git clone <vetosh-repo-url> vetosh && cd vetosh
+git clone https://github.com/zxqfd555/vetosh.git && cd vetosh
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -U uv

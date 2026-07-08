@@ -188,6 +188,7 @@ hardcoded.
 | `splitter.type` | `token_count`\|`recursive` | `token_count` | indexer | Chunking strategy. |
 | `splitter.chunk_size` | int | `512` | indexer | Max chunk size (tokens). |
 | `splitter.chunk_overlap` | int | `50` | indexer | Overlap (used by `recursive`). |
+| `indexer.workers` | int | `1` | indexer | Worker **processes** (sharded via `pathway spawn`). Raise for large backfills — each worker carries its own embedding stack (~1 GB with local embeddings); the benchmarks run with `8`. |
 | `persistence.enabled` | bool | `true` | indexer | See [Persistence](#5-persistence). |
 | `persistence.backend` | `filesystem` | `filesystem` | indexer | Persistence backend. |
 | `persistence.path` | str | `./persistence` | indexer | Persistence directory (also hosts the parse cache under `runtime_calls/`). Silent default — the wizard does not ask. |
