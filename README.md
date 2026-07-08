@@ -262,7 +262,12 @@ source .venv/bin/activate
 pip install -U uv
 # uv, because pip's resolver currently times out ("resolution too deep")
 # against the dev package index; uv resolves the same set in seconds.
-uv pip install -e ".[dev,local]" --extra-index-url https://packages.pathway.com/966431ef6ba
+# --prerelease=allow is REQUIRED: the dev index carries .dev builds only,
+# and without the flag the resolver silently falls back to the released
+# PyPI pathway, which lacks the connectors vetosh needs.
+uv pip install -e ".[dev,local]" --prerelease=allow \
+    --extra-index-url https://packages.pathway.com/966431ef6ba
+python -c "import pathway; print(pathway.__version__)"   # must print a .dev build
 
 # 2. A (free) Pathway license: https://pathway.com/framework/get-license
 export PATHWAY_LICENSE_KEY=...

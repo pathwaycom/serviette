@@ -22,7 +22,12 @@ classifiers = [
 ]
 dependencies = [
     "pathway>=0.31",
-    "pathway[xpack-llm]>=0.31",
+    # xpack-llm-docs is required at IMPORT time by the current xpack (its
+    # parsers module imports pdf2image/unstructured/docling unconditionally;
+    # upstream fix to restore lazy imports is requested). It also powers the
+    # keyless multimodal defaults (docling for PDFs). Drop back to plain
+    # xpack-llm once the upstream lazy-import fix ships, if desired.
+    "pathway[xpack-llm,xpack-llm-docs]>=0.31",
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "httpx>=0.27",
@@ -42,7 +47,7 @@ sharepoint = ["Office365-REST-Python-Client>=2.5"]
 # don't ship it, and setuptools>=81 removed it entirely.
 pyfilesystem = ["fs>=2.4", "setuptools<81"]
 # Local, free multimodal parsing (the keyless defaults of the parser: section).
-docling = ["docling>=2.0"]            # layout-aware PDF (tables), local
+# (docling ships with the core dependency via pathway[xpack-llm-docs].)
 # paddlepaddle pinned below 3.3: its PIR+oneDNN executor crashes on some
 # CPUs (ConvertPirAttribute2RuntimeAttribute); 3.0.x is solid.
 ocr = ["paddleocr>=2.7", "paddlepaddle>=2.6,<3.3", "paddlex[ocr]>=3.0"]

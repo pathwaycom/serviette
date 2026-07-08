@@ -15,6 +15,30 @@ import sys
 from vetosh import APP_NAME, __version__
 
 
+_DEV_PATHWAY_HINT = (
+    "Your installed pathway ({version}) is a released build without the "
+    "vector-store connectors vetosh needs (they have not shipped in a "
+    "release yet). Install the development build into this environment:\n\n"
+    "  uv pip install -U pathway --prerelease=allow \\\n"
+    "      --extra-index-url https://packages.pathway.com/966431ef6ba\n"
+)
+
+
+def _ensure_dev_pathway() -> None:
+    """Fail with instructions, not an AttributeError, on a released pathway.
+
+    Engine-facing commands (indexer/up/demo) need connectors that exist only
+    in development builds; a plain `pip install pathway` from PyPI resolves
+    to a release without them, and the first symptom used to be an opaque
+    crash deep in the stack.
+    """
+
+    import pathway as pw
+
+    if not hasattr(pw.io, "duckdb"):
+        raise SystemExit(_DEV_PATHWAY_HINT.format(version=pw.__version__))
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -31,6 +55,8 @@ def main(argv: list[str] | None = None) -> None:
     # Parse only the first token so each subcommand owns the rest of argv.
     args, rest = parser.parse_known_args(argv)
 
+    if args.command in ("indexer", "up", "demo"):
+        _ensure_dev_pathway()
     if args.command == "indexer":
         from vetosh.indexer.main import main as indexer_main
 
