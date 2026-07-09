@@ -216,6 +216,8 @@ def test_pyfilesystem_source_end_to_end(tmp_path):
     """Index a directory through the pyfilesystem connector (osfs://)."""
     import duckdb
 
+    pytest.importorskip("fs")  # optional extra; the runtime degrades the same way
+
     docs = tmp_path / "docs"
     docs.mkdir()
     (docs / "a.txt").write_text("cats purr in the yard")

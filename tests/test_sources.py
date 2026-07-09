@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vetosh.config.schema import FsSource, GDriveSource, S3Source, SharePointSource, VetoshConfig
 from vetosh.indexer.sources import (
     FsFetcher,
@@ -195,7 +197,8 @@ def test_pyfilesystem_source_validates():
 
 
 def test_pyfilesystem_fetcher_reads_bytes_and_suffix():
-    import fs as pyfs
+    # The pyfilesystem source is an optional extra; the test mirrors that.
+    pyfs = pytest.importorskip("fs")
 
     from vetosh.config.schema import PyFilesystemSource
     from vetosh.indexer.sources import PyFilesystemFetcher, make_fetcher
@@ -299,3 +302,19 @@ def test_parser_rules_in_fingerprint_without_credentials(monkeypatch):
     dumped = str(fp["parser"])
     assert "twelvelabs_video" in dumped and "P" in dumped
     assert "SECRET" not in dumped
+
+
+def test_pyfilesystem_source_without_extra_fails_helpfully(monkeypatch):
+    """No bare ModuleNotFoundError: the user is told which extra to install."""
+    import sys
+
+    import pytest as _pytest
+
+    from vetosh.config.schema import PyFilesystemSource
+    from vetosh.indexer.sources import read_source
+
+    monkeypatch.setitem(sys.modules, "fs", None)  # simulates the missing extra
+    src = PyFilesystemSource(fs_url="mem://")
+    with _pytest.raises(SystemExit) as exc:
+        read_source(src, name="s")
+    assert "vetosh[pyfilesystem]" in str(exc.value)

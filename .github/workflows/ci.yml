@@ -1,0 +1,136 @@
+# CI: lint + fast unit tests on every push/PR; the engine-backed suites
+# (slow e2e, per-database integration) run when the PATHWAY_LICENSE_KEY
+# secret is configured and skip gracefully when it is not.
+#
+# Pathway is installed from the internal dev package index (prebuilt wheels;
+# no released Pathway ships the connectors vetosh needs yet). uv is required:
+# pip's resolver times out against the dev index. --prerelease=allow is
+# REQUIRED too — the index carries .dev builds only, and without the flag the
+# resolver silently falls back to the released PyPI pathway.
+# NOTE for the pre-publication checklist: remove the internal index URL when
+# vetosh can depend on a released Pathway.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  PATHWAY_DEV_INDEX: https://packages.pathway.com/966431ef6ba
+
+jobs:
+  lint-and-fast:
+    name: lint + fast tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-py${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
+      - name: Install
+        run: |
+          pip install -U uv
+          uv venv .venv
+          # pyfilesystem here is a CI-environment choice, not a package
+          # dependency: it keeps the optional-source tests exercised instead
+          # of being skipped (they importorskip when the extra is absent).
+          uv pip install --python .venv/bin/python -e ".[dev,local,pyfilesystem]" \
+            --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
+          .venv/bin/python -c "import pathway; v = pathway.__version__; assert 'dev' in v, v; print('pathway', v)"
+      - name: Ruff
+        run: .venv/bin/python -m ruff check vetosh tests
+      - name: Fast tests
+        run: .venv/bin/python -m pytest tests/ -m "not slow and not integration" -q
+
+  slow:
+    name: e2e indexer / up / demo smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    needs: lint-and-fast
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check license secret
+        id: license
+        run: |
+          if [ -n "${{ secrets.PATHWAY_LICENSE_KEY }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::PATHWAY_LICENSE_KEY secret is not set — skipping the engine-backed suite"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.license.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        if: steps.license.outputs.present == 'true'
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-py3.12-${{ hashFiles('pyproject.toml') }}
+      - name: Install
+        if: steps.license.outputs.present == 'true'
+        run: |
+          pip install -U uv
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev,local,pyfilesystem]" \
+            --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
+      - name: Slow tests (multimodal parser tests excluded — they download models)
+        if: steps.license.outputs.present == 'true'
+        env:
+          PATHWAY_LICENSE_KEY: ${{ secrets.PATHWAY_LICENSE_KEY }}
+        run: |
+          .venv/bin/python -m pytest tests/ -m "slow and not integration" -q \
+            --ignore=tests/test_multimodal_parsers.py
+
+  integration:
+    name: vector-DB integration matrix (docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: lint-and-fast
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check license secret
+        id: license
+        run: |
+          if [ -n "${{ secrets.PATHWAY_LICENSE_KEY }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::PATHWAY_LICENSE_KEY secret is not set — skipping the integration matrix"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.license.outputs.present == 'true'
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        if: steps.license.outputs.present == 'true'
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-py3.12-${{ hashFiles('pyproject.toml') }}
+      - name: Install
+        if: steps.license.outputs.present == 'true'
+        run: |
+          pip install -U uv
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e ".[dev,all,local,pyfilesystem,sharepoint]" \
+            --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
+      - name: Integration tests
+        if: steps.license.outputs.present == 'true'
+        env:
+          PATHWAY_LICENSE_KEY: ${{ secrets.PATHWAY_LICENSE_KEY }}
+        run: .venv/bin/python -m pytest tests/ -m integration -q
