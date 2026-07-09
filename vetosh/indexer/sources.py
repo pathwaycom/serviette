@@ -84,7 +84,13 @@ def read_source(src, name: str) -> pw.Table:
             name=name,
         )
     if src.type == "pyfilesystem":
-        from fs import open_fs
+        try:
+            from fs import open_fs
+        except ImportError as exc:
+            raise SystemExit(
+                "The 'pyfilesystem' source needs the PyFilesystem2 library: "
+                "pip install 'vetosh[pyfilesystem]'"
+            ) from exc
 
         return pw.io.pyfilesystem.read(
             open_fs(src.fs_url),

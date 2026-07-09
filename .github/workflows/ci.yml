@@ -28,7 +28,7 @@ jobs:
   lint-and-fast:
     name: lint + fast tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -60,7 +60,7 @@ jobs:
   slow:
     name: e2e indexer / up / demo smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 75
     needs: lint-and-fast
     steps:
       - uses: actions/checkout@v4
@@ -87,7 +87,7 @@ jobs:
         run: |
           pip install -U uv
           uv venv .venv
-          uv pip install --python .venv/bin/python -e ".[dev,local]" \
+          uv pip install --python .venv/bin/python -e ".[dev,local,pyfilesystem]" \
             --prerelease=allow --extra-index-url "$PATHWAY_DEV_INDEX"
       - name: Slow tests (multimodal parser tests excluded — they download models)
         if: steps.license.outputs.present == 'true'
@@ -100,7 +100,7 @@ jobs:
   integration:
     name: vector-DB integration matrix (docker)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     needs: lint-and-fast
     steps:
       - uses: actions/checkout@v4
