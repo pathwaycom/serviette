@@ -441,9 +441,20 @@ class PersistenceConfig(BaseModel):
 class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    host: str = "0.0.0.0"
+    # Loopback by default: the server has no built-in auth (that is the
+    # perimeter's job — see the Security section of the docs), so listening
+    # on all interfaces must be an explicit decision ("0.0.0.0"), not a
+    # surprise on a laptop in a cafe.
+    host: str = "127.0.0.1"
     # An uncommon default port: 8000/8080 collide with half the dev tools.
     port: int = 8989
+    # Opt-in CORS allowlist for third-party browser frontends that call this
+    # API directly from another origin. Empty (the default) = no CORS
+    # headers at all — which is itself a protection: it stops web pages from
+    # reading responses of localhost instances (drive-by exfiltration).
+    # vetosh's own UIs never need this (same origin / server-side proxy).
+    # Enable only if you know what you are doing; prefer exact origins over "*".
+    cors_origins: list[str] = Field(default_factory=list)
     # Serve the chat UI on "/" from the same process/port (same-origin, no
     # CORS). Disable for a pure-API deployment; the standalone
     # `vetosh frontend` command covers split UI/API deployments.
@@ -460,7 +471,7 @@ class FrontendConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"  # loopback by default, same reasoning as ServerConfig
     port: int = 3000
     # Base URL of the vetosh server API this frontend talks to.
     api_url: str = "http://localhost:8989"

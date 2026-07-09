@@ -112,7 +112,7 @@ def build_config(answers: dict[str, Any]) -> dict[str, Any]:
 
     if needs_server:
         config["server"] = {
-            "host": answers.get("server_host", "0.0.0.0"),
+            "host": answers.get("server_host", "127.0.0.1"),
             "port": answers.get("server_port", 8989),
         }
         if answers.get("rag_enabled"):
@@ -598,7 +598,7 @@ class Wizard:
         # into the YAML for the user to tune there.
 
         if needs_server:
-            # Host/port are silent defaults (0.0.0.0:8989 — uncommon port, no
+            # Host/port are silent defaults (127.0.0.1:8989 — loopback + uncommon port, no
             # tool conflicts); emitted into the YAML for later tuning.
             self._section("Enable /rag endpoint?")
             answers["rag_enabled"] = self.p.confirm("Enable /rag endpoint?", default=False)

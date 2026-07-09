@@ -18,7 +18,7 @@ BASE = {
     "embedder_api_key": "${OPENAI_API_KEY}",
     "chunk_size": 512,
     "chunk_overlap": 50,
-    "server_host": "0.0.0.0",
+    "server_host": "127.0.0.1",
     "server_port": 8000,
     "rag_enabled": False,
     "output_path": "./config.yaml",

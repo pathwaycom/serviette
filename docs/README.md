@@ -192,13 +192,14 @@ hardcoded.
 | `persistence.enabled` | bool | `true` | indexer | See [Persistence](#5-persistence). |
 | `persistence.backend` | `filesystem` | `filesystem` | indexer | Persistence backend. |
 | `persistence.path` | str | `./persistence` | indexer | Persistence directory (also hosts the parse cache under `runtime_calls/`). Silent default — the wizard does not ask. |
-| `server.host` / `server.port` | str / int | `0.0.0.0` / `8989` | server | Bind address. |
+| `server.host` / `server.port` | str / int | `127.0.0.1` / `8989` | server | Bind address. Loopback by default; set `0.0.0.0` explicitly to listen on all interfaces (containers, remote access) — see [Security](#security--exposing-the-server). |
 | `server.serve_frontend` | bool | `true` | server | Serve the chat UI on `/` from the same port (API stays under `/api/v1`). |
 | `llm.type` | str | `openai` | server | LLM for `/rag` (omit to disable `/rag`). |
 | `llm.model` | str | `gpt-4o-mini` | server | Chat model. |
 | `llm.api_key` | str | — | server | API key (or `${ENV}`). |
-| `frontend.host` / `frontend.port` | str / int | `0.0.0.0` / `3000` | frontend (standalone) | Bind address for the split-deployment chat UI. |
-| `frontend.api_url` | str | `http://localhost:8989` | frontend (standalone) | Base URL of the API the standalone frontend proxies to. |
+| `frontend.host` / `frontend.port` | str / int | `127.0.0.1` / `3000` | frontend (standalone) | Bind address for the split-deployment chat UI. |
+| `frontend.api_url` | str | `http://localhost:8989` | frontend (standalone) | Base URL of the API the standalone frontend proxies to — point it at the backend host in split deployments (frontend fleet / backend fleet). The address never reaches the browser. |
+| `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. vetosh's own UIs never need it. Prefer exact origins over `*`. |
 | `frontend.title` | str | `vetosh` | both | Title shown in the chat UI (embedded and standalone). |
 
 **Supported embedders** (from `pathway.xpacks.llm.embedders`): `openai`,
@@ -462,3 +463,59 @@ python docs/generate_demos.py     # -> docs/assets/demo.gif
 
 The scene (the Team-tier question, the `sed` price edit, the second answer)
 is parameterized by constants at the top of the script.
+
+
+## Security & exposing the server
+
+The API server binds to **127.0.0.1 by default**: on a laptop, `vetosh up`
+serves only you. It deliberately ships **no built-in authentication** —
+that is a perimeter concern, and a reverse proxy does it better than any
+hand-rolled API key (TLS, key rotation, SSO, rate limits, audit logs come
+for free). This is the norm for tools of this class: Qdrant self-hosted
+ships with auth off, Ollama has none at all — and internet scans keep
+finding thousands of Ollama instances exposed by a careless `0.0.0.0`.
+Don't join them.
+
+To serve beyond localhost:
+
+1. Set the bind address explicitly — it is an intentional decision:
+
+   ```yaml
+   server:
+     host: 0.0.0.0     # containers / remote access; keep 127.0.0.1 otherwise
+     port: 8989
+   ```
+
+2. Put an authenticating reverse proxy in front. A complete example with
+   [Caddy](https://caddyserver.com) (TLS is automatic):
+
+   ```
+   rag.example.com {
+       basic_auth {
+           # generate the hash with: caddy hash-password
+           alice $2a$14$...bcrypt-hash...
+       }
+       reverse_proxy 127.0.0.1:8989
+   }
+   ```
+
+   With this in place vetosh itself can stay on 127.0.0.1 — only the proxy
+   is exposed. Any equivalent (nginx + auth_basic, oauth2-proxy, Cloudflare
+   Access, a VPN like Tailscale) works the same way.
+
+**CORS** is deliberately not emitted by default: vetosh's own UIs never
+need it (the embedded chat is same-origin; the standalone frontend proxies
+server-side, so `frontend.api_url` may point at a backend on another host —
+or another fleet — without any browser-visible cross-origin traffic), and
+the absence of CORS headers is what stops arbitrary web pages from reading
+responses off localhost instances. If you build your own browser frontend
+that calls the API directly from another origin, opt in with an explicit
+allowlist:
+
+```yaml
+server:
+  cors_origins: ["https://app.example.com"]   # never "*" unless you truly mean it
+```
+
+The engine's monitoring endpoints (`indexer.monitoring_http_port`) are
+loopback-only by construction and cannot be exposed directly.

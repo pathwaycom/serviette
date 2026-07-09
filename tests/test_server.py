@@ -150,3 +150,36 @@ def test_local_embedder_warmed_up_at_startup(store_path):
     embedder = CountingLocalEmbedder()
     with _client(store_path, embedder):
         assert CountingLocalEmbedder.calls == 1  # warm-up ran on startup
+
+
+def test_cors_disabled_by_default(store_path, mock_server_embedder):
+    with _client(store_path, mock_server_embedder) as client:
+        resp = client.post(
+            "/api/v1/retrieve",
+            json={"query": "hello", "k": 1},
+            headers={"Origin": "https://evil.example"},
+        )
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_cors_opt_in_allowlist(store_path, mock_server_embedder):
+    config = VetoshConfig(
+        vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
+        embedder=EmbedderConfig(type="openai"),
+        server={"cors_origins": ["https://app.example.com"]},
+    )
+    accessor = DuckDbAccessor(config.vector_db)
+    app = create_app(config, embedder=mock_server_embedder, accessor=accessor)
+    with TestClient(app) as client:
+        allowed = client.post(
+            "/api/v1/retrieve",
+            json={"query": "hello", "k": 1},
+            headers={"Origin": "https://app.example.com"},
+        )
+        assert allowed.headers.get("access-control-allow-origin") == "https://app.example.com"
+        foreign = client.post(
+            "/api/v1/retrieve",
+            json={"query": "hello", "k": 1},
+            headers={"Origin": "https://evil.example"},
+        )
+        assert "access-control-allow-origin" not in foreign.headers

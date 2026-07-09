@@ -107,6 +107,18 @@ def create_app(
 
     app = FastAPI(title=f"{title} server", lifespan=lifespan)
 
+    if config.server and config.server.cors_origins:
+        # Off by default on purpose (see ServerConfig.cors_origins); an
+        # explicit allowlist opts in third-party browser frontends.
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=config.server.cors_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
     @app.exception_handler(IndexNotReadyError)
     async def _index_not_ready(_request, exc: IndexNotReadyError):
         # The indexer simply hasn't written its first batch yet — a normal

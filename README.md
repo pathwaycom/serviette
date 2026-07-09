@@ -236,6 +236,13 @@ and you get per-stage throughput and freshness graphs with no extra code.
 Logs from both processes go to stdout/stderr in plain text; `vetosh up`
 interleaves them with per-process prefixes.
 
+## Security
+
+The server listens on **localhost only** by default and ships no built-in
+authentication — exposing it is an explicit decision: set `server.host:
+0.0.0.0` and put an authenticating reverse proxy in front (a five-line
+Caddy example lives in [docs](docs/README.md#security--exposing-the-server)).
+
 ## Requirements
 
 Python ≥ 3.10 (the minimum supported by Pathway).
