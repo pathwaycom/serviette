@@ -11,7 +11,7 @@ is built by scrolling the collection's texts and fused with the vector
 results via reciprocal-rank fusion. The BM25 corpus is capped at
 ``hybrid_max_chunks`` (in-process indexing does not scale to tens of
 millions of chunks); Qdrant-native sparse vectors are the planned
-replacement at that scale (ROADMAP.md).
+replacement at that scale.
 """
 
 from __future__ import annotations

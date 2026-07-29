@@ -198,7 +198,7 @@ class _HybridCapableConfig(BaseModel):
     that embedding distance ranks poorly. In-process BM25 targets corpora up to
     a few million chunks; above ``hybrid_max_chunks`` the keyword leg is skipped
     with a warning and retrieval stays pure-vector. Native server-side keyword
-    search is the planned replacement at larger scale (see ROADMAP.md).
+    search is the planned replacement at larger scale.
     """
 
     hybrid: bool = False
@@ -244,8 +244,9 @@ class DuckDbConfig(_HybridCapableConfig):
     **inside DuckDB** with ``list_cosine_similarity`` — a vectorized, columnar
     scan, not a Python loop.
 
-    Concurrency: the sink writes with ``detach_between_batches`` (Pathway ≥
-    #10496), releasing the single-writer file lock between minibatches, so the
+    Concurrency: the sink writes with ``detach_between_batches`` (Pathway
+    0.31.2.dev series), releasing the single-writer file lock between
+    minibatches, so the
     server's retrying read-only connections query the same file while a
     streaming indexer runs. On older Pathway builds serviette warns and falls
     back to hold-the-lock behavior (use ``mode: static`` there).
@@ -335,7 +336,7 @@ class PineconeConfig(BaseModel):
     # In-process BM25 hybrid is NOT available on Pinecone: it has no
     # scan-all-vectors API, so the keyword corpus cannot be built server-side.
     # Setting this raises a clear error at startup. Native hybrid needs a
-    # second (sparse) index fed by the indexer — planned, see ROADMAP.md.
+    # second (sparse) index fed by the indexer — planned.
     hybrid: bool = False
 
 

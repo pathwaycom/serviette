@@ -10,7 +10,7 @@ fusion (see :func:`serviette.server.ranking.rrf_merge`).
 In-process BM25 targets corpora up to a few million chunks; above
 ``hybrid_max_chunks`` the keyword leg is skipped with a one-time warning and
 retrieval degrades to pure vector search. Backends whose engine offers native
-server-side keyword scoring should prefer that (planned — see ROADMAP.md);
+server-side keyword scoring should prefer that (planned);
 backends that cannot enumerate their rows at all (Pinecone) cannot use this
 mixin and reject ``hybrid: true`` at startup.
 """
@@ -97,7 +97,7 @@ class KeywordHybridMixin:
                     "hybrid: ~%d chunks exceeds hybrid_max_chunks=%d — skipping "
                     "the in-process BM25 leg (retrieval stays pure-vector). "
                     "Raise the cap or move to native server-side keyword search "
-                    "(see ROADMAP.md).",
+                    "(planned).",
                     count,
                     self._hybrid_max_chunks,
                 )

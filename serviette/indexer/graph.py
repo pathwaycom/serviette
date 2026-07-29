@@ -543,7 +543,7 @@ def _write_duckdb(table: pw.Table, vdb) -> None:
     kwargs: dict[str, Any] = {}
     # Release the single-writer file lock between minibatches so a separate
     # server process can answer queries while the streaming indexer runs
-    # (pathway >= #10496; the accessor retries through the brief lock
+    # (pathway builds with detach_between_batches; the accessor retries through the brief lock
     # windows). Older builds keep the previous hold-the-lock behavior.
     if "detach_between_batches" in inspect.signature(pw.io.duckdb.write).parameters:
         kwargs["detach_between_batches"] = True

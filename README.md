@@ -109,20 +109,25 @@ laptops and demos (see [docs](docs/README.md) for its concurrency note).
 
 ## Benchmarks
 
+Two self-contained benchmarks, one per axis: what indexing costs in time
+and memory, and how accurate the retrieval is.
+
+### Indexing resources
+
 Self-contained benchmark (docker-compose: Qdrant + indexer + server, fully
 local embeddings, zero API cost) over a Wikipedia corpus of plain text —
 every byte below is extracted text (a PDF collection with the same text
 content would weigh several times more) —
 see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
 
-| corpus | ≈ pages | files | chunks | indexing time | peak memory (PSS) | in Qdrant | retrieval accuracy |
-|---|---|---|---|---|---|---|---|
-| 100 MB | 52 000 | 12 969 | 66 136 | 39 s | 6.6 GB | 0.6 GB | 5/5 |
-| 1 GB | 524 000 | 240 516 | 836 595 | 4.8 min | 6.9 GB | 2.2 GB | 19/20 |
-| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 15 min | 7.3 GB | 6.0 GB | 16/20 |
-| 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 58 min | 7.7 GB | 20.8 GB | 15/20 |
-| 30 GB | 15 729 000 | 9 202 620 | 29 817 294 | 2.9 h | 10.1 GB | 61.3 GB | 11/20 |
-| 50 GB | 26 214 000 | 17 083 603 | 53 913 774 | 5.5 h | 13.1 GB | 107.9 GB | 12/20 |
+| corpus | ≈ pages | files | chunks | indexing time | peak memory (PSS) | in Qdrant |
+|---|---|---|---|---|---|---|
+| 100 MB | 52 000 | 12 969 | 66 136 | 39 s | 6.6 GB | 0.6 GB |
+| 1 GB | 524 000 | 240 516 | 836 595 | 4.8 min | 6.9 GB | 2.2 GB |
+| 3 GB | 1 573 000 | 841 890 | 2 703 850 | 15 min | 7.3 GB | 6.0 GB |
+| 10 GB | 5 243 000 | 3 423 359 | 10 093 514 | 58 min | 7.7 GB | 20.8 GB |
+| 30 GB | 15 729 000 | 9 202 620 | 29 817 294 | 2.9 h | 10.1 GB | 61.3 GB |
+| 50 GB | 26 214 000 | 17 083 603 | 53 913 774 | 5.5 h | 13.1 GB | 107.9 GB |
 
 Documents flow through the pipeline rather than accumulating in it, so
 what stays in memory is short and worth spelling out.
@@ -169,16 +174,36 @@ jemalloc's `background_thread` purging enabled in the indexer containers
 are from the prebuilt development wheel — the same one the Development
 section installs, so they are reproducible as-is.
 
-A note on the accuracy column. The benchmark is tuned for indexing
-throughput, so it uses just about the fastest embedding model that exists: a
-static one — a token-lookup table with no attention, truncated to 256
-dimensions. That model is both the throughput bottleneck (embedding dominates
-the indexing time above) and the accuracy ceiling: every logged miss is the
-right article losing to a near-duplicate neighbour ("Anarchism" vs "Issues in
-anarchism"), not a lost document — the pipeline indexed 100% of the corpus in
-every run. Swap one config line for a stronger embedder and the accuracy
-ceiling lifts with it, at proportional embedding cost; the engine numbers —
-memory and everything outside embedding time — stay as measured.
+### Retrieval accuracy (FRAMES)
+
+End-to-end evaluation on [FRAMES](https://arxiv.org/abs/2409.12941)
+(Google, 2024): 824 multi-hop questions whose answers must be assembled
+from 2–15 English Wikipedia articles — see
+[benchmarks/frames](benchmarks/frames), full technical report in
+[REPORT.md](benchmarks/frames/REPORT.md):
+
+| measurement | result |
+|---|---|
+| gold-article recall — the paper's metric, on the paper's corpus | **0.50** vs 0.15 published for the paper's BM25 baseline (0.21 for our reproduction of it) |
+| paired gain from adding serviette to gpt-5, paper's protocol | **+5.2 pp** over the same model without retrieval (McNemar z = 4.1, 824 questions) |
+| adaptive retrieval in the grounded (context-only) regime | **41.3% → 52.8%** (z = 7.5) — the largest single effect measured |
+| absolute accuracy (permissive, gpt-5) | **73.7%** — above every number in the paper, including its 5-step agent (66.0%) and oracle (72.9%) |
+
+The setup reproduces the paper wherever technically possible: the identical
+Wikipedia dump (TFDS `wikipedia/20230601.en`, 5.22M articles → 12.07M
+chunks) indexed in full by serviette with the free local `e5-small-v2`
+embedder — so the recall row costs nothing in API fees — plus the paper's
+own retrieval metric and its verbatim autorater prompt. Comparisons are
+paired and internal (identical corpus, generator, judge; only the retrieval
+layer varies — the opt-in strategies described under
+[Retrieval quality](#retrieval-quality) below), because the absolute score
+is dominated by the 2026
+generator — its no-retrieval baseline alone reaches 68.5% — which is why
+the headline is the paired delta, not 73.7%. The grounded rows measure
+serviette as it ships for private corpora: answers strictly from retrieved
+documents, a deliberately stricter regime than the paper's. Methodology,
+statistics, limitations and raw per-question outputs:
+[REPORT.md](benchmarks/frames/REPORT.md).
 
 ## Multimodality
 
@@ -243,15 +268,15 @@ the store, so support depends on the backend:
 | Weaviate | ✅ | ✅ | ✅ | ✅ in-process |
 | ChromaDB | ✅ | ✅ | ✅ | ✅ in-process |
 | MongoDB  | ✅ | ✅ | ✅ | ✅ in-process |
-| Pinecone | ✅ | ✅ | ✅ | ❌ — no scan-all API ([roadmap](ROADMAP.md)) |
+| Pinecone | ✅ | ✅ | ✅ | ❌ — no scan-all API; native sparse-index hybrid is planned |
 
 In-process BM25 targets corpora up to a few million chunks; above
 `hybrid_max_chunks` the keyword leg is skipped with a warning and retrieval
 stays pure-vector. **Pinecone** cannot enumerate its vectors, so it has no
 in-process hybrid — `hybrid: true` there fails fast at startup with that
-explanation; native hybrid (a second sparse index) is on the
-[roadmap](ROADMAP.md). Native server-side BM25 for the client-server backends
-(replacing the in-process leg at larger scale) is tracked there too.
+explanation; native hybrid (a second sparse index) is planned. Native
+server-side BM25 for the client-server backends (replacing the in-process
+leg at larger scale) is planned as well.
 
 ## Observability
 

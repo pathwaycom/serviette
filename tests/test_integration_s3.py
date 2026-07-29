@@ -5,7 +5,8 @@ bucket are indexed by the real indexer (bytes fetched on demand by the
 S3Fetcher), retrieval runs through the DuckDB accessor, and deleting an
 object from the bucket removes its vectors on the next pass.
 
-Requires a Pathway build with s3 ``only_metadata`` support (#10483); skips
+Requires a Pathway build with s3 ``only_metadata`` support (the 0.31.2.dev
+series); skips
 otherwise, and when Docker or boto3 is unavailable.
 """
 
@@ -79,7 +80,7 @@ def minio_port(tcp_port):
 
 def test_s3_source_scenario(minio_port, tmp_path):
     if not _pathway_supports_s3_only_metadata():
-        pytest.skip("This pathway build lacks s3 only_metadata support (#10483)")
+        pytest.skip("This pathway build lacks s3 only_metadata support")
 
     s3 = _s3_client(minio_port)
     s3.put_object(Bucket=BUCKET, Key="docs/a.txt", Body=ALPHA.encode())

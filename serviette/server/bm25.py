@@ -5,7 +5,7 @@ library for backends (embedded DuckDB, Qdrant) whose native keyword scoring
 serviette does not use yet. Tens of thousands of chunks tokenize in well
 under a second; the accessors cap corpus size and fall back to pure vector
 search beyond it — at that scale a backend-native sparse index is the right
-tool (see ROADMAP).
+tool (native sparse-vector hybrid is planned).
 """
 
 from __future__ import annotations

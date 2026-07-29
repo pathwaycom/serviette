@@ -39,7 +39,9 @@ x-serviette: &serviette
     # runs in D-state). Refresh with rsync after pip installs.
     - /mnt/scratch/sergey/serviette-venv312:/home/sergey/serviette/.venv312:ro
     - /mnt/scratch/sergey/iot-pathway-develop-wt/public/pathway/python:/opt/pathway-src/python:ro
-    - /mnt/scratch/sergey/pixi/IoT-Pathway-18069838481262607842/envs/default/lib:/opt/pixi-lib:ro
+    # Host dir with the toolchain libraries the dev pathway build links
+    # against (conda/pixi env lib dir). Machine-specific; set in .env.
+    - ${PATHWAY_TOOLCHAIN_LIB:-/usr/lib}:/opt/pixi-lib:ro
     - ./compat:/opt/compat:ro
     - /mnt/scratch/sergey/hf-cache:/hf-cache:ro
     - ${BENCH_DATA_ROOT:-./datasets}/${BENCH_SIZE:-100mb}/docs:/data/docs:ro

@@ -22,8 +22,8 @@ classifiers = [
 ]
 dependencies = [
     "pathway>=0.31",
-    # >=0.31.2.dev899: the first build where the xpack imports lazily
-    # (Pathway #10521) — older dev builds crash on import without the
+    # >=0.31.2.dev899: the first build where the xpack imports lazily —
+    # older dev builds crash on import without the
     # xpack-llm-docs extra. Heavy document parsers (docling, unstructured)
     # are opt-in via the serviette extras below.
     "pathway[xpack-llm]>=0.31.2.dev899",

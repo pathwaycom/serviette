@@ -25,7 +25,7 @@ class PineconeAccessor(AsyncVectorAccessor):
                 "hybrid retrieval is not supported on the Pinecone backend: it "
                 "has no API to enumerate all stored vectors, so an in-process "
                 "BM25 corpus cannot be built. Native hybrid needs a separate "
-                "sparse index fed by the indexer (planned — see ROADMAP.md); "
+                "sparse index fed by the indexer (planned); "
                 "for in-process hybrid today use duckdb, qdrant, pgvector, "
                 "milvus, weaviate, chroma or mongodb."
             )

@@ -1,9 +1,5 @@
 # Single-Shot Retrieval-Augmented Generation on FRAMES: A Controlled Evaluation of serviette
 
-**Status: complete for the permissive comparison; the grounded regime is
-characterized on a single configuration** (one model, one run — §7, §8),
-and the adaptive result awaits its fixed-k control (§5.4, §8).
-
 ## Abstract
 
 We evaluate serviette — a no-code, single-shot RAG server built on the

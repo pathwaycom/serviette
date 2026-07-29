@@ -51,7 +51,8 @@ def _terminate(proc: subprocess.Popen, name: str) -> None:
 
 
 def _warn_duckdb_streaming(config: ServietteConfig) -> None:
-    # With pathway >= #10496 the duckdb sink detaches between batches and the
+    # Pathway builds with detach_between_batches in the duckdb sink (the
+    # 0.31.2.dev series) release the file lock between minibatches and the
     # server reads the file concurrently; only warn on older builds, where a
     # STREAMING indexer holds the file read-write for its lifetime.
     if config.vector_db and config.vector_db.type == "duckdb" and any(
