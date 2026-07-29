@@ -1,13 +1,14 @@
 # Single-Shot Retrieval-Augmented Generation on FRAMES: A Controlled Evaluation of serviette
 
-**Status: complete.** Two secondary measurements (reasoning-effort
-ablation, grounded weak-model rows) were skipped on budget and are marked
-as such in §5.5 and §7.
+**Status: complete.** Two secondary measurements (the reasoning-effort
+ablation and grounded weak-model rows) are deferred to future work — see
+§5.5 and §7.
 
 ## Abstract
 
 We evaluate serviette — a no-code, single-shot RAG server built on the
-Pathway Live Data Framework — on FRAMES (Krishna et al., 2024), an
+Pathway Live Data Framework — on
+[FRAMES](https://arxiv.org/abs/2409.12941) (Krishna et al., 2024), an
 824-question multi-hop benchmark over English Wikipedia. We reproduce the
 paper's corpus exactly (the TFDS `wikipedia/20230601.en` dump, 5.22M articles,
 12.07M chunks), adopt its autorater prompt, and measure under two explicitly
@@ -81,6 +82,16 @@ Corpus preparation is fully scripted (`fetch_dataset.py`,
 `extract_corpus.py`, `fetch_gold_fallback.py`); distractor-free — the full
 dump *is* the distractor set.
 
+**The working corpus.** Alongside the full dump we maintain a small corpus
+cut from the same snapshot: the 2,453 gold articles plus 77,961 distractor
+articles selected by a deterministic title hash — 80,488 articles, 208,010
+chunks, indexable in ~1.5 h versus 75 h for the full dump. It exists purely
+for fast feature-ablation iteration (which retrieval features help, and in
+what order); retrieval there is ~80× easier by gold base-rate, so **no
+headline or cross-paper number is measured on it**. Where its results
+appear (feature ranking in §5.3, the corpus-size check in §5.1, the hybrid
+estimate in §8) they are labeled "working corpus" explicitly.
+
 ## 4. Methodology
 
 ### 4.1 Metrics
@@ -113,6 +124,12 @@ knowledge; the only regime whose accuracies may be set beside the paper's.
 
 ### 5.1 Retrieval (generator-free, full dump)
 
+Configuration labels: **vector** = plain dense retrieval (embed the
+question, take the k nearest chunks by cosine similarity);
+**vector+decompose** = the same, plus the LLM-generated sub-queries of §2
+retrieving in parallel with the original question, results fused
+round-robin.
+
 | Method | Article recall@context | Full-coverage rate |
 |---|---|---|
 | BM25@4 whole articles (paper, published) | 0.12–0.15 | — |
@@ -140,9 +157,21 @@ the two mechanisms are complementary, not redundant. This curve also
 predicts the adaptive-retrieval result (§5.4): a refusal-triggered escalation
 to k=32 operates at ≈0.53 recall instead of 0.41.
 
-Two observations. First, the BM25 reproduction validates the pipeline: same
-method, same corpus, same metric land in the paper's ballpark (0.21 vs
-0.15; residual gap attributable to tokenizer/stemming differences). Second,
+The BM25 rows involve no index and no part of serviette: they are computed
+by a standalone two-pass streaming scorer (`run_bm25_baseline.py`) directly
+over the corpus text files — Okapi BM25 (k1=1.5, b=0.75), whole articles,
+the raw question as the query, exactly the paper's baseline setup. (BM25
+needs only corpus term statistics; an index buys query speed, which a
+one-shot batch evaluation does not need.)
+
+Two observations. First, this BM25 reproduction validates the evaluation
+pipeline: same method, same corpus, same metric land in the paper's
+ballpark (0.21 vs 0.15; residual gap attributable to tokenizer/stemming
+differences). Note the discrepancy's direction: our reimplementation
+credits the baseline with a *stronger* result than its authors published,
+and the headline multiplier is computed against that stronger 0.21 —
+implementation uncertainty is priced against serviette, not for it.
+Second,
 decomposition — one cheap LLM call — is worth +12 to +21 recall points on
 multi-hop questions, and the quality of the decomposing model matters
 (mini 0.406 → gpt-5 0.497).
@@ -155,8 +184,13 @@ full-dump numbers above.
 
 ### 5.2 End-to-end, permissive regime (the paper's protocol)
 
-serviette = vector+decompose, k=8, full dump. Δ is the paired gain over the
-same generator's no-retrieval row. Note an intentional design property:
+**Naive** (the paper's term) = no retrieval at all: the model receives the
+bare question and answers from parametric memory alone — the floor against
+which retrieval's contribution is measured. serviette = vector+decompose at
+a fixed k=8 (single-shot; adaptive retrieval applies only to the grounded
+regime, §5.4 — its escalation trigger is the grounded refusal marker, which
+permissive answering rarely emits), full dump. Δ is the paired gain over
+the same generator's naive row. Note an intentional design property:
 each row is the *self-contained system* a user would deploy — decomposition
 sub-queries are produced by the row's own generator, so retrieval quality
 itself varies with the model (context recall column). Δ therefore measures
@@ -211,12 +245,12 @@ generator), realized here inside one product configuration flag.
 
 ### 5.5 Reasoning-effort ablation
 
-Not run (API budget exhausted after §5.4); the `llm.reasoning_effort`
-configuration knob ships in the product, and the ablation (≈$12) is queued
-as follow-up work. The trade-off is practically relevant: at equal API
-conditions, per-question latency roughly doubled from grounded to
-permissive mode (≈46 s → ≈96 s), indicating substantially longer reasoning
-traces whose tokens are billed as output.
+A natural direction for future work: the `llm.reasoning_effort`
+configuration knob ships in the product, and the accuracy/cost/latency
+trade-off it controls is practically relevant — at equal API conditions,
+per-question latency roughly doubled from grounded to permissive mode
+(≈46 s → ≈96 s), indicating substantially longer reasoning traces whose
+tokens are billed as output.
 
 ## 6. Analysis
 
@@ -257,7 +291,7 @@ construction of the audit): headline accuracies are conservative by up to
 4. **Chunk-level recall is optimistic** versus the paper's whole-article
    inclusion (a retrieved chunk may miss the needed fact).
 5. **Hybrid and MMR disabled** in the tested configuration (§2). Grounded
-   weak-model rows on the full dump were not run (budget); the grounded
+   weak-model rows on the full dump are left to future work; the grounded
    regime is therefore characterized on gpt-5 only, plus the working-corpus
    gpt-4o ablations.
 6. Oracle context truncated at 400k characters for the longest questions.
@@ -265,10 +299,13 @@ construction of the audit): headline accuracies are conservative by up to
 ## 8. Future work
 
 Native sparse-vector (BM25) hybrid at full-dump scale: the upstream
-connector support is merged (Pathway PRs #10541, #10546); the serviette
-integration and a 75 h re-index are scheduled separately. On the 80k
-working corpus the BM25 leg was worth +4 recall points; the full-dump
-gain is an open measurement.
+connector support has landed in Pathway
+([schema-driven named dense+sparse vectors in `pw.io.qdrant.write`](https://github.com/pathwaycom/pathway/commit/972e56cd1b),
+[sparse records in `pw.io.pinecone.write`](https://github.com/pathwaycom/pathway/commit/fdbedb1c58));
+the serviette integration and a 75 h re-index are scheduled separately. On
+the 80k working corpus the BM25 leg was worth +4 recall points; the
+full-dump gain is an open measurement. Further directions: the
+reasoning-effort ablation (§5.5) and grounded weak-model rows (§7).
 
 ## 9. Reproducibility
 
