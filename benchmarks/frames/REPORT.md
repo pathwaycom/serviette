@@ -1,8 +1,8 @@
 # Single-Shot Retrieval-Augmented Generation on FRAMES: A Controlled Evaluation of serviette
 
-**Status: complete.** Two secondary measurements (the reasoning-effort
-ablation and grounded weak-model rows) are deferred to future work — see
-§7 and §8.
+**Status: complete for the permissive comparison; the grounded regime is
+characterized on a single configuration** (one model, one run — §7, §8),
+and the adaptive result awaits its fixed-k control (§5.4, §8).
 
 ## Abstract
 
@@ -15,27 +15,28 @@ paper's corpus exactly (the TFDS `wikipedia/20230601.en` dump, 5.22M articles,
 separated regimes: *permissive* (the paper's protocol — the generator may
 combine retrieved context with parametric knowledge) and *grounded* (strictly
 context-only — serviette's product default, deliberately stricter than the
-paper). The system-attributable results: on the identical corpus and
+paper). Three system-attributable results. On the identical corpus and
 metric, serviette's retrieval reaches **0.50 gold-article recall versus
-0.15 published / 0.21 reproduced for the paper's BM25 baseline**; adding
+0.15 published / 0.21 reproduced for the paper's BM25 baseline**. Adding
 serviette to gpt-5 under the paper's protocol yields a **paired +5.2 pp
 over the same model without retrieval** (McNemar z = 4.1 on 824 shared
-questions); and under grounding, refusal-triggered **adaptive retrieval —
-one product configuration flag — lifts accuracy 41.3% → 52.8%** (z = 7.5),
-the largest single effect we measure, anticipated by an independently
-measured recall-vs-k curve. For context only: the absolute permissive
-score, 73.7%, exceeds every number the paper reports, including its
-five-step agentic pipeline (66.0%) and oracle (72.9%) — but most of that
-gap belongs to the 2026 generator, whose no-retrieval baseline alone scores
-68.5% on this 2024 benchmark; we therefore foreground paired deltas, not
-absolute comparisons. Across our three-model ladder the paired gain is
-significant at both ends (+3.8 pp weakest, +5.2 pp strongest) with no
-measurable effect mid-tier; whether this is a genuinely non-monotonic
-pattern is left as a hypothesis pending replication. A failure taxonomy
-attributes 62% of remaining permissive errors to retrieval misses and
-bounds the autorater's false-negative rate at ≈3 pp (false positives
-unaudited). All corpora, configurations, raw per-question outputs, and
-scripts are pinned and included.
+questions). Under grounding, the refusal-triggered **adaptive-retrieval
+flag lifts accuracy 41.3% → 52.8%** (z = 7.5) — the largest single effect
+we measure, though a fixed-k control separating the escalation policy from
+sheer context size remains future work (§5.4). For context only: the
+absolute permissive score, 73.7%, exceeds every number the paper reports,
+including its five-step agentic pipeline (66.0%) and oracle (72.9%) — but
+most of that gap belongs to the 2026 generator, whose no-retrieval
+baseline alone scores 68.5% on this 2024 benchmark, so we foreground
+paired deltas, not absolute comparisons. Across our three-model ladder the
+paired gain is significant at both ends (+3.8 pp weakest, +5.2 pp
+strongest) with no measurable effect mid-tier; whether this is a genuinely
+non-monotonic pattern is left as a hypothesis pending replication. A
+failure taxonomy attributes 62% of remaining permissive errors to
+retrieval misses and estimates the autorater's false-negative rate at
+≈3 pp (a single-LLM estimate; false positives unaudited). All corpora,
+configurations, raw per-question outputs, and scripts are pinned and
+included.
 
 ## 1. Scope and claims
 
@@ -52,10 +53,12 @@ This report makes three claims and explicitly does not make several others.
    (+11.5 pp, z = 7.5). The absolute permissive score exceeding every
    number in the paper is offered as context, not as a claim about the
    system — that comparison is dominated by generator strength (§5.2).
-3. For a strictly grounded system the binding constraint is retrieval
-   recall: 60% of grounded errors are refusals, the oracle ceiling sits
+3. For gpt-5 under grounding on this corpus, the binding constraint is
+   retrieval recall: 60% of grounded errors are refusals, the ceiling sits
    ≈27 pp above the fixed-k configuration, and adaptive retrieval recovers
-   42% of that headroom.
+   roughly two-fifths of that headroom (both figures inherit the ceiling
+   estimate's uncertainty, §5.3; generalization beyond this
+   model-and-corpus pair is untested, §7).
 
 **Observed, not claimed:** paired retrieval gains are significant at both
 ends of the model ladder and absent in the middle. The "non-monotonic in
@@ -261,9 +264,34 @@ grounded accuracy from 41.3% to
 (24 post-snapshot gold articles remain unavailable even to the oracle, §3)
 is the grounded reasoning/reading ceiling of the generator itself (note it
 sits close to the model's permissive naive 68.5% — with complete evidence,
-grounding costs nothing). Working-corpus grounded ablations (gpt-4o:
-features-off 34.6% → full stack 43.8%) established feature ranking and are
-reported in RESULTS.md.
+grounding costs nothing). Downstream figures that use ≈68 as a point — the
++27 pp headroom here and the "recovers ≈42%" of §5.4 — inherit this
+estimate's uncertainty of ±several pp. Working-corpus grounded ablations
+(gpt-4o: features-off 34.6% → full stack 43.8%) established feature
+ranking and are reported in RESULTS.md.
+
+**Does grounding actually ground?** Four observations say the regime works
+as specified, not merely that it scores lower:
+
+1. *Memory suppression.* Only 32/824 grounded answers (3.9%) are correct
+   with zero gold-article coverage — and that is an upper bound on
+   parametric leakage, since on a full-Wikipedia corpus the needed fact
+   often appears in non-gold articles too. The permissive run, same
+   questions, has 78 such answers: the grounded prompt eliminates at least
+   ~60% of memory-sourced correctness.
+2. *Honest failure mode.* 60% of grounded errors are explicit refusals,
+   not fabrications — the system says "the documents don't show this"
+   rather than inventing.
+3. *Reading ability intact.* With complete evidence the grounded score
+   (68.4% on fully-covered questions; 68.2% oracle) matches the model's
+   unrestricted naive 68.5% — grounding costs nothing when retrieval
+   delivers.
+4. *Evidence-tracking.* Correct grounded answers sit at 0.61 mean context
+   recall versus 0.39 for errors — correctness follows what was actually
+   retrieved.
+
+A formal faithfulness audit (are non-refusal answers actually entailed by
+their context?) was not performed and would strengthen this section.
 
 ### 5.4 Adaptive retrieval under grounding
 
@@ -277,16 +305,30 @@ claim.
 **Result: 52.8% accuracy at 0.572 context recall** — versus 41.3% / 0.482
 for fixed k=8. Paired on identical questions: adaptivity fixed 128 answers
 and broke 33 (McNemar z = +7.5), the largest single effect measured in
-this evaluation. Adaptive retrieval recovers 42% of the grounded regime's
-retrieval headroom (41.3 → 52.8 of a 68.2 ceiling) at the cost of extra
-context tokens only on the questions that refused — the single-shot
-analogue of the paper's five-step agentic gain (+25.2 pp on its weak
-generator), realized here inside one product configuration flag.
+this evaluation — attributed here to the *configuration flag*, not yet to
+a specific mechanism, for the following reason.
+
+**Missing control.** The comparison is against fixed k=8, but escalation
+changes two things at once: the refusal-triggered policy *and* the amount
+of context. The k-sweep (§5.1) shows fixed k=32 alone lifts recall
+substantially, so part of the +11.5 pp may be "more chunks", not "smarter
+policy". The separating experiment — grounded gpt-5 at a *fixed* k=32 —
+was not run and is the cheapest item in §8. Its two possible outcomes are
+both informative: parity would recast adaptivity as a *cost* result
+(matching large-k accuracy while paying large-k tokens only on the ~36% of
+questions that refuse — still a real product property); superiority would
+establish the policy mechanism. Note the outcome is genuinely open in both
+directions: adaptive serves large contexts only to refusers, while fixed
+k=32 also imposes them on questions already answered correctly at k=8,
+where added context can distract. Adaptive retrieval recovers ≈42% of the
+grounded regime's retrieval headroom (41.3 → 52.8 of a ≈68 ceiling, ±
+per §5.3) — the single-shot analogue of the paper's five-step agentic
+gain (+25.2 pp on its weak generator), realized inside one configuration
+flag.
 
 ## 6. Analysis
 
-### 6.1 Retrieval value across generator strength: two significant ends,
-an open middle
+### 6.1 Retrieval value across generator strength
 
 What the data establish: significant paired gains at both ends of the
 ladder (+3.8 pp weakest, +5.2 pp strongest) and no measurable effect for
@@ -353,23 +395,26 @@ bound requires auditing a sample of *passed* verdicts — listed in §8.
 
 In rough priority order:
 
-1. **Native sparse-vector (BM25) hybrid at full-dump scale.** The upstream
+1. **The adaptive-retrieval control: grounded gpt-5 at fixed k=32** — one
+   run separating the escalation policy from context size (§5.4); the
+   cheapest and most claim-relevant item on this list.
+2. **Native sparse-vector (BM25) hybrid at full-dump scale.** The upstream
    connector support has landed in Pathway
    ([schema-driven named dense+sparse vectors in `pw.io.qdrant.write`](https://github.com/pathwaycom/pathway/commit/972e56cd1b),
    [sparse records in `pw.io.pinecone.write`](https://github.com/pathwaycom/pathway/commit/fdbedb1c58));
    the serviette integration and a 75 h re-index are scheduled separately.
    On the 80k working corpus the BM25 leg was worth +4 recall points; the
    full-dump gain is an open measurement.
-2. **Replication of the model ladder** — repeated runs per configuration
+3. **Replication of the model ladder** — repeated runs per configuration
    (generation variance) and grounded rows for the weaker models: the
    grounded regime, the most product-relevant one, is currently
    characterized on one model in one run.
-3. **Disentangling the ladder confound** — one fixed set of sub-queries
+4. **Disentangling the ladder confound** — one fixed set of sub-queries
    (e.g., gpt-5's) served to all three readers, separating reader strength
    from retrieval quality (§6.1).
-4. **A two-sided autorater bound** — auditing a sample of *passed*
+5. **A two-sided autorater bound** — auditing a sample of *passed*
    verdicts, ideally with a non-LLM (human) spot check (§6.3).
-5. **The reasoning-effort ablation** — the `llm.reasoning_effort` product
+6. **The reasoning-effort ablation** — the `llm.reasoning_effort` product
    knob against the latency observation of §4.2.
 
 ## 9. Reproducibility
