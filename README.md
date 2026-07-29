@@ -206,6 +206,53 @@ vision model for images instead of OCR, set a custom video prompt); see
 content is text, so any of the embedder families — including the local
 credential-free default — covers a multimodal corpus.
 
+## Retrieval quality
+
+Retrieval and answering are pure-vector by default; five opt-in strategies
+improve accuracy, each a few lines of config. They compose freely — decompose
+widens *what* is retrieved, hybrid and reranking reorder *which* chunks win,
+MMR *diversifies* them, and adaptive RAG *retries* with more context when the
+answer is not found.
+
+- **Hybrid (BM25 + vector).** Fuses vector similarity with an in-process BM25
+  keyword index (reciprocal-rank fusion). The two signals fail differently —
+  embeddings match paraphrases, BM25's IDF makes rare exact tokens (names,
+  dates, IDs) dominate — so their fusion beats either alone on entity-heavy
+  corpora. Enable with `hybrid: true` on the vector-db section.
+- **Reranker.** A second stage rescoring a shortlist of candidates: a local,
+  keyless cross-encoder (`reranker: {type: cross_encoder}`) or pointwise LLM
+  scoring (`type: llm`). Best for precise, single-hop questions.
+- **Adaptive RAG.** Answers from `k` chunks first, then grows the context and
+  re-asks while the LLM reports the answer is not present (`rag.adaptive`).
+- **Query decomposition.** One LLM call splits a multi-hop question into
+  sub-queries, retrieves for each, and fuses — so chunks of different hops
+  stop competing for the same top-k slots (`rag.decompose`).
+- **MMR.** Diversifies the result set, trading relevance against redundancy
+  (`rag.mmr`).
+
+The reranker and the multi-step strategies (adaptive, decompose) are
+backend-independent — they work on every vector DB. Hybrid and MMR read from
+the store, so support depends on the backend:
+
+| Backend  | Vector | Reranker · Adaptive · Decompose | MMR | Hybrid (BM25) |
+|----------|:------:|:-------------------------------:|:---:|:-------------:|
+| DuckDB   | ✅ | ✅ | ✅ | ✅ in-process |
+| Qdrant   | ✅ | ✅ | ✅ | ✅ in-process |
+| pgvector | ✅ | ✅ | ✅ | ✅ in-process |
+| Milvus   | ✅ | ✅ | ✅ | ✅ in-process |
+| Weaviate | ✅ | ✅ | ✅ | ✅ in-process |
+| ChromaDB | ✅ | ✅ | ✅ | ✅ in-process |
+| MongoDB  | ✅ | ✅ | ✅ | ✅ in-process |
+| Pinecone | ✅ | ✅ | ✅ | ❌ — no scan-all API ([roadmap](ROADMAP.md)) |
+
+In-process BM25 targets corpora up to a few million chunks; above
+`hybrid_max_chunks` the keyword leg is skipped with a warning and retrieval
+stays pure-vector. **Pinecone** cannot enumerate its vectors, so it has no
+in-process hybrid — `hybrid: true` there fails fast at startup with that
+explanation; native hybrid (a second sparse index) is on the
+[roadmap](ROADMAP.md). Native server-side BM25 for the client-server backends
+(replacing the in-process leg at larger scale) is tracked there too.
+
 ## Observability
 
 Three layers, all on by default or one config line away:

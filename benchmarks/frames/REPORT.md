@@ -74,7 +74,7 @@ test:
 | Corpus | full English Wikipedia, TFDS `wikipedia/20230601.en` | same dump: 5,222,443 articles ≥500 chars → 12,068,600 chunks |
 | Gold articles | annotator-linked `wiki_links` | 2,453/2,477 present (99.03%); the 24 absent were created after the snapshot — absent for the paper as well. Redirect-titled links resolved via snapshot-date revisions; recall matching uses an alias map |
 | Retrieval metric | gold-article recall in context | identical (article counted if ≥1 of its chunks retrieved — an optimistic reading vs. the paper's whole-article inclusion; noted in §7) |
-| Judge | LLM autorater, Appendix-B prompt, 0.96 agreement w/ humans | same prompt verbatim; gpt-4o-mini, temperature 0; 94% agreement with a gpt-4o judge on a 100-question sample; noise bounded in §6.3 |
+| Judge | LLM autorater, Appendix-B prompt, 0.96 agreement w/ humans | same prompt verbatim; gpt-4o-mini, temperature 0. Validation: 94% agreement with a gpt-4o judge on a 100-question sample drawn from this benchmark's July predecessor run (same prompt and judge configuration, different answer set); noise additionally bounded on *this* run's answers via the failure audit, §6.3 |
 | Generator | Gemini-Pro-1.5-0514 (retired) | three tiers (gpt-4o-mini / gpt-4o / gpt-5) bracketing the paper's generator by the naive anchor (§5.2) |
 
 Corpus preparation is fully scripted (`fetch_dataset.py`,
@@ -91,12 +91,13 @@ dump *is* the distractor set.
   retrieval), c (broken by retrieval), z.
 
 ### 4.2 Cost/compute accounting
-Every generation run logs token usage from API responses; embedding and
-retrieval are local and free. Total API spend for every number in this
-report: ≈$128 (per-run figures in `results/*.jsonl` summaries; generation
-inside the server is estimated from token arithmetic where the server did
-not log usage — a known gap, noted for reproduction). Indexing: 75 h on 96
-CPU cores (8 Pathway workers × 12 threads, ~2,700 chunks/min).
+Embedding and retrieval are local and free. API usage is metered from
+response objects for judge calls and for the direct-call rungs
+(naive/oracle, `run_ladder.py`); generation issued *inside the serviette
+server* was not usage-logged (a known instrumentation gap) and is estimated
+from token arithmetic. Total API spend for every number in this report:
+≈$128 (per-run figures in `results/*.jsonl` summaries). Indexing: 75 h on
+96 CPU cores (8 Pathway workers × 12 threads, ~2,700 chunks/min).
 
 ### 4.3 Two regimes, never mixed
 **Grounded** (product default): the system prompt forbids outside knowledge;
@@ -128,6 +129,11 @@ decompose rows):
 | vector | 0.232 | 0.284 | 0.334 | 0.386 | 0.428 |
 | vector+decompose | 0.328 | 0.407 | 0.468 | 0.529 | 0.577 |
 
+(The k=8 decompose cell, 0.407, is an independent re-run of the 0.406 row
+in the table above; the 0.001 discrepancy is the observed re-run variance —
+ANN search plus mini-generated sub-queries — and doubles as a measure of
+retrieval-pipeline reproducibility.)
+
 Recall grows ≈ logarithmically in k with no saturation by k=64, and
 decomposition's advantage (+10–15 pp) is stable across the whole range —
 the two mechanisms are complementary, not redundant. This curve also
@@ -150,14 +156,19 @@ full-dump numbers above.
 ### 5.2 End-to-end, permissive regime (the paper's protocol)
 
 serviette = vector+decompose, k=8, full dump. Δ is the paired gain over the
-same generator's no-retrieval row.
+same generator's no-retrieval row. Note an intentional design property:
+each row is the *self-contained system* a user would deploy — decomposition
+sub-queries are produced by the row's own generator, so retrieval quality
+itself varies with the model (context recall column). Δ therefore measures
+"what does adding serviette to this model do", not "same context, different
+reader".
 
-| Generator | Naive | serviette RAG | Δ | McNemar |
-|---|---|---|---|---|
-| gpt-4o-mini | 32.9% | 36.7% | +3.8 pp | b=104, c=73, z=+2.33 (p<0.02) |
-| gpt-4o | 49.9% | 47.8% | −2.1 pp | b=86, c=103, z=−1.24 (n.s.) |
-| gpt-5 | 68.5% | **73.7%** | +5.2 pp | b=78, c=35, z=+4.05 (p<10⁻⁴) |
-| *Gemini-Pro-1.5 (paper)* | *40.8%* | *BM25@4 47.4 · 5-step agent 66.0 · oracle 72.9* | | |
+| Generator | Naive | serviette RAG | Context recall | Δ | McNemar |
+|---|---|---|---|---|---|
+| gpt-4o-mini | 32.9% | 36.7% | 0.404 | +3.8 pp | b=104, c=73, z=+2.33 (p<0.02) |
+| gpt-4o | 49.9% | 47.8% | 0.421 | −2.1 pp | b=86, c=103, z=−1.24 (n.s.) |
+| gpt-5 | 68.5% | **73.7%** | 0.497 | +5.2 pp | b=78, c=35, z=+4.05 (p<10⁻⁴) |
+| *Gemini-Pro-1.5 (paper)* | *40.8%* | *BM25@4 47.4 · 5-step agent 66.0 · oracle 72.9* | *0.15 (BM25)* | | |
 
 The paper's generator strength (naive 40.8%) is bracketed by our
 gpt-4o-mini (32.9%) and gpt-4o (49.9%) rows.
@@ -174,7 +185,8 @@ constraint. The regime's ceiling was estimated two independent ways:
 
 The two estimates agree to 0.2 pp, a strong internal-consistency check.
 Reading: perfect retrieval would lift grounded accuracy from 41.3% to
-≈68% (+27 pp of retrieval headroom); the residual ≈32% error at recall=1
+≈68% (+27 pp of retrieval headroom); the residual ≈32% error at recall≈1
+(24 post-snapshot gold articles remain unavailable even to the oracle, §3)
 is the grounded reasoning/reading ceiling of the generator itself (note it
 sits close to the model's permissive naive 68.5% — with complete evidence,
 grounding costs nothing). Working-corpus grounded ablations (gpt-4o:
@@ -201,9 +213,10 @@ generator), realized here inside one product configuration flag.
 
 Not run (API budget exhausted after §5.4); the `llm.reasoning_effort`
 configuration knob ships in the product, and the ablation (≈$12) is queued
-as follow-up work. Anecdotally, permissive-mode reasoning roughly doubles
-completion tokens versus grounded mode on the same questions (§9), so the
-low-effort trade-off is practically relevant.
+as follow-up work. The trade-off is practically relevant: at equal API
+conditions, per-question latency roughly doubled from grounded to
+permissive mode (≈46 s → ≈96 s), indicating substantially longer reasoning
+traces whose tokens are billed as output.
 
 ## 6. Analysis
 
@@ -264,6 +277,8 @@ pinned revisions, corpus extraction from the public TFDS bucket, sweep
 orchestrators, this report's numbers as raw per-question JSONL in
 `results/`), configs (including ports and worker/thread settings), judge
 prompt verbatim, and the cost model in `run_ladder.py`. Hardware: 96-core
-CPU host, no GPU, 2 TB RAM (≤64 GB used), ~110 GB disk. Version pins:
+CPU host, no GPU; peak memory ≈50 GB (Qdrant's 12M-point HNSW plus eight
+indexer workers; estimate — the host is shared, per-process accounting was
+not collected), ~110 GB disk. Version pins:
 pathway 0.31.2-dev915, qdrant-client 1.18/server 1.15.5, e5-small-v2
 revision as fetched 2026-07-24.

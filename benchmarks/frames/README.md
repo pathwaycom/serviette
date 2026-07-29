@@ -3,7 +3,14 @@
 End-to-end evaluation of serviette's retrieval quality on
 [FRAMES](https://arxiv.org/abs/2409.12941) (Google, 2024): 824 multi-hop
 questions whose answers must be assembled from 2–15 English Wikipedia
-articles. The methodology tracks the paper wherever technically possible and
+articles.
+
+> **Start with [REPORT.md](REPORT.md)** — the full technical report:
+> methodology, statistics, analysis, limitations. This README is the
+> operational companion (fidelity summary, headline numbers, how to run);
+> [results/RESULTS.md](results/RESULTS.md) holds the raw data tables.
+
+The methodology tracks the paper wherever technically possible and
 documents every deviation below.
 
 ## Fidelity to the paper
@@ -11,7 +18,7 @@ documents every deviation below.
 | Aspect | Paper | This benchmark |
 |---|---|---|
 | Questions | 824, `google/frames-benchmark` | Same dataset, revision pinned in `fetch_dataset.py` |
-| Corpus | Full English Wikipedia, TFDS `wikipedia/20230601.en` | **Same snapshot.** Working corpus = the ~2.5k gold articles + a deterministic ~78k-article distractor sample; the optional star run indexes the full dump. Gold articles whose canonical dump title differs from the link (redirects) are fetched via the Wikipedia API **at the snapshot date**; a handful of gold links point at articles created *after* the snapshot — those are absent here exactly as they were absent in the paper's corpus |
+| Corpus | Full English Wikipedia, TFDS `wikipedia/20230601.en` | **Same dump, indexed in full**: 5.22M articles → 12.07M chunks — every headline number is measured against it. A small working corpus (the ~2.5k gold articles + a deterministic ~78k distractor sample) exists alongside for fast feature ablations only. Gold articles whose canonical dump title differs from the link (redirects) are fetched via the Wikipedia API **at the snapshot date**; a handful of gold links point at articles created *after* the snapshot — absent here exactly as they were absent in the paper's corpus |
 | Retrieval unit | Whole articles, BM25, n_docs ∈ {2, 4} | 512-token chunks; k=8 chunks ≈ the same context budget as BM25\@4 short articles |
 | Retrieval metric | Gold-article recall in context (0.12–0.15 for their BM25) | Same metric, `run_retrieval_eval.py` — directly comparable, and free of LLM cost |
 | Headline metric | Accuracy via LLM autorater | Same |
@@ -27,11 +34,9 @@ prompts. Only the retrieval layer varies.
 
 ## Results
 
-**The primary document is [REPORT.md](REPORT.md)** — a full technical
-report (methodology, fidelity, statistics, analysis, limitations);
-[results/RESULTS.md](results/RESULTS.md) holds the running data tables.
 Headlines, measured on the paper's full Wikipedia dump under the paper's
-permissive protocol:
+permissive protocol (full analysis and statistics in
+[REPORT.md](REPORT.md)):
 
 - **serviette single-shot RAG + gpt-5: 73.7%** — above the paper's 5-step
   agentic pipeline (66.0%) and its oracle ceiling (72.9%); the retrieval
@@ -71,8 +76,9 @@ python fetch_gold_fallback.py --missing $FRAMES_DATA/gold-missing.txt \
 docker run -d --name frames-qdrant -p 6343:6333 -p 6344:6334 \
     -v $FRAMES_DATA/qdrant:/qdrant/storage qdrant/qdrant
 
-serviette indexer --config configs/base-e5small.yaml   # one-time (~hours, CPU)
-serviette server  --config <base + overlay>            # per configuration
+serviette indexer --config configs/base-e5small.yaml       # working corpus (~1.5 h)
+serviette indexer --config configs/base-e5small-full.yaml  # full dump (~75 h)
+serviette server  --config <base + overlay>                # per configuration
 
 python run_retrieval_eval.py --questions $FRAMES_DATA/questions.jsonl \
     --k 8 --label <config-label>                       # free
