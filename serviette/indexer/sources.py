@@ -28,8 +28,9 @@ source-agnostic.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 import pathway as pw
 
@@ -166,6 +167,7 @@ class GDriveFetcher:
                 self._credentials_file, scopes=_GDRIVE_SCOPES
             )
             self._service = build("drive", "v3", credentials=creds)
+        assert self._service is not None
         # get_media's execute() returns the raw file bytes.
         return self._service.files().get_media(fileId=file_id).execute()
 

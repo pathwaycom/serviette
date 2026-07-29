@@ -48,6 +48,7 @@ def create_app(config: ServietteConfig, *, client: httpx.AsyncClient | None = No
 
     config.for_frontend()
     fe = config.frontend
+    assert fe is not None  # guaranteed by for_frontend()
     index_html = load_index(fe.title)
     owns_client = client is None
 
@@ -76,8 +77,9 @@ def create_app(config: ServietteConfig, *, client: httpx.AsyncClient | None = No
     async def _proxy(name: str, request: Request) -> JSONResponse:
         try:
             body = await request.json()
-        except Exception:
+        except Exception:  # noqa: BLE001 - any malformed body proxies as empty
             body = {}
+        assert client is not None  # created in lifespan before serving
         try:
             upstream = await client.post(_PROXY_ROUTES[name], json=body)
         except httpx.HTTPError as exc:
@@ -93,6 +95,7 @@ def create_app(config: ServietteConfig, *, client: httpx.AsyncClient | None = No
 
     @app.get("/api/v1/stats")
     async def stats() -> JSONResponse:
+        assert client is not None  # created in lifespan before serving
         try:
             upstream = await client.get("/api/v1/stats")
         except httpx.HTTPError:
@@ -120,5 +123,7 @@ def run(config: ServietteConfig) -> None:
     import uvicorn
 
     config.for_frontend()
+    fe = config.frontend
+    assert fe is not None  # guaranteed by for_frontend()
     app = create_app(config)
-    uvicorn.run(app, host=config.frontend.host, port=config.frontend.port)
+    uvicorn.run(app, host=fe.host, port=fe.port)

@@ -190,7 +190,7 @@ def run(config: ServietteConfig, config_path: str) -> int:
 
     shutdown_requested = False
 
-    def _on_signal(signum, _frame):  # noqa: ANN001 - signal handler
+    def _on_signal(signum, _frame):
         nonlocal shutdown_requested
         shutdown_requested = True
 

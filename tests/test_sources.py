@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from serviette.config.schema import FsSource, GDriveSource, S3Source, SharePointSource, ServietteConfig
+from serviette.config.schema import (
+    FsSource,
+    GDriveSource,
+    S3Source,
+    ServietteConfig,
+    SharePointSource,
+)
 from serviette.indexer.sources import (
     FsFetcher,
     GDriveFetcher,
@@ -12,7 +18,6 @@ from serviette.indexer.sources import (
     SharePointFetcher,
     make_fetcher,
 )
-
 
 # -- schema ------------------------------------------------------------------
 
@@ -106,7 +111,7 @@ class _FakeS3Client:
     def __init__(self):
         self.calls = []
 
-    def get_object(self, Bucket, Key):  # noqa: N803 - boto3 API
+    def get_object(self, Bucket, Key):
         import io
 
         self.calls.append((Bucket, Key))

@@ -6,20 +6,20 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import fake_embedding, write_duckdb_rows
 from serviette.config.schema import (
     DuckDbConfig,
     EmbedderConfig,
     LLMConfig,
     RagConfig,
     RerankerConfig,
-    ServietteConfig,
     ServerConfig,
+    ServietteConfig,
 )
 from serviette.server.accessors.duckdb import DuckDbAccessor
 from serviette.server.main import create_app
 from serviette.server.ranking import mmr_select, rrf_merge
 from serviette.server.reranker import LLMReranker, _parse_rating
+from tests.conftest import fake_embedding, write_duckdb_rows
 
 DOCS = [
     "alpha document about cats",

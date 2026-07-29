@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import fake_embedding, write_duckdb_rows
 from serviette.config.schema import DuckDbConfig, EmbedderConfig, ServietteConfig
 from serviette.server.accessors.duckdb import DuckDbAccessor
 from serviette.server.main import create_app
+from tests.conftest import fake_embedding, write_duckdb_rows
 
 DOCS = ["alpha document about cats", "beta report on dogs", "gamma notes on birds"]
 

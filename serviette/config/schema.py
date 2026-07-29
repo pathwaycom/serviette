@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -96,7 +96,7 @@ class S3Source(BaseModel):
     max_backlog_size: int | None = 1000
 
     @model_validator(mode="after")
-    def _custom_endpoint_needs_region(self) -> "S3Source":
+    def _custom_endpoint_needs_region(self) -> S3Source:
         # Without a region the AWS signature's credential scope is malformed
         # and S3-compatible stores reject requests with an opaque
         # AuthorizationQueryParametersError. MinIO's default is us-east-1.
@@ -179,7 +179,7 @@ class ParserRule(BaseModel):
 
 
 Source = Annotated[
-    Union[FsSource, GDriveSource, S3Source, SharePointSource, PyFilesystemSource],
+    FsSource | GDriveSource | S3Source | SharePointSource | PyFilesystemSource,
     Field(discriminator="type"),
 ]
 
@@ -357,16 +357,7 @@ class MongoDbConfig(_HybridCapableConfig):
 
 
 VectorDBConfig = Annotated[
-    Union[
-        DuckDbConfig,
-        PgVectorConfig,
-        MilvusConfig,
-        QdrantConfig,
-        ChromaConfig,
-        WeaviateConfig,
-        PineconeConfig,
-        MongoDbConfig,
-    ],
+    DuckDbConfig | PgVectorConfig | MilvusConfig | QdrantConfig | ChromaConfig | WeaviateConfig | PineconeConfig | MongoDbConfig,
     Field(discriminator="type"),
 ]
 
@@ -709,7 +700,7 @@ def load_config(path: str | Path) -> ServietteConfig:
 
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
-        raise ValueError(f"Config root must be a mapping, got {type(raw).__name__}")
+        raise TypeError(f"Config root must be a mapping, got {type(raw).__name__}")
     interpolated = interpolate_env(raw)
     try:
         return ServietteConfig.model_validate(interpolated)

@@ -14,7 +14,6 @@ import sys
 
 from serviette import APP_NAME, __version__
 
-
 _DEV_PATHWAY_HINT = (
     "Your installed pathway ({version}) is a released build without the "
     "vector-store connectors serviette needs (they have not shipped in a "
@@ -62,8 +61,8 @@ def main(argv: list[str] | None = None) -> None:
 
         indexer_main(rest)
     elif args.command == "server":
-        from serviette.server.main import run
         from serviette.server.config import load_server_config
+        from serviette.server.main import run
 
         server_args = _parse_config_arg("server", rest)
         run(load_server_config(server_args.config))

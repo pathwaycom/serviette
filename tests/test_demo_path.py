@@ -12,6 +12,7 @@ what quickstart wrote.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -33,11 +34,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _wait(predicate, timeout: float, message: str) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
+        with contextlib.suppress(Exception):
             if predicate():
                 return
-        except Exception:  # noqa: BLE001 - readiness probing
-            pass
         time.sleep(1)
     raise TimeoutError(message)
 

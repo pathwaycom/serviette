@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.conftest import fake_embedding
 from serviette.config.schema import QdrantConfig
 from serviette.server.accessors.qdrant import QdrantAccessor
+from tests.conftest import fake_embedding
 
 DOCS = [
     "alpha document about cats",

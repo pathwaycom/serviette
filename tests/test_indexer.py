@@ -54,6 +54,7 @@ def _run_pass(cfg_path: Path, cache_dir: Path | None = None) -> None:
         capture_output=True,
         text=True,
         timeout=PASS_TIMEOUT,
+        check=False,
     )
     assert proc.returncode == 0, f"indexer failed:\n{proc.stderr[-3000:]}"
 

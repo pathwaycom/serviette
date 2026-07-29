@@ -16,6 +16,9 @@ import pytest
 
 boto3 = pytest.importorskip("boto3")
 
+from serviette.config.schema import DuckDbConfig
+from serviette.server.accessors.duckdb import DuckDbAccessor
+from serviette.testing import fake_embedding
 from tests.dockerutil import (
     docker_available,
     run_container,
@@ -23,9 +26,6 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import ALPHA, BETA, run_indexer, write_config
-from serviette.config.schema import DuckDbConfig
-from serviette.server.accessors.duckdb import DuckDbAccessor
-from serviette.testing import fake_embedding
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

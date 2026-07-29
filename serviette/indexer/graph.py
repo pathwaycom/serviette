@@ -35,10 +35,10 @@ import asyncio
 import fnmatch
 import hashlib
 import inspect
-import os
 import json
 import logging
-from typing import Any
+import os
+from typing import Any, ClassVar
 
 import pathway as pw
 
@@ -88,7 +88,7 @@ class ParserRegistry:
     here so the enclosing UDF stays sync.
     """
 
-    _SUFFIXES: dict[str, set[str]] = {
+    _SUFFIXES: ClassVar[dict[str, set[str]]] = {
         "text": {".txt", ".md", ".markdown", ".text", ""},
         "pdf": {".pdf"},
         "image": {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"},
@@ -210,7 +210,8 @@ class ParserRegistry:
         parser = self._get(kind, options)
         result = parser.__wrapped__(contents)
         if inspect.isawaitable(result):
-            result = asyncio.run(result)
+            # Some xpack parsers return a bare Awaitable rather than a Coroutine.
+            result = asyncio.run(result)  # type: ignore[arg-type]
         # result is list[(text, metadata)]; concatenate element texts — our own
         # splitter re-chunks downstream. str() because some parsers return
         # str-like objects (e.g. PaddleOCR's MarkdownResult), not plain str.
@@ -293,7 +294,7 @@ def build_xpack_splitter(cfg):
         chunk instead (single-chunk texts are left untouched)."""
 
         def chunk(
-            self, text: str, metadata: dict = {}, **kwargs
+            self, text: str, metadata: dict = {}, **kwargs  # noqa: B006 - mirrors the xpack splitter signature
         ) -> list[tuple[str, dict]]:
             chunks = super().chunk(text, metadata, **kwargs)
             if len(chunks) >= 2 and len(chunks[-1][0]) < 100:
@@ -412,6 +413,7 @@ def build_graph(
     exploded = chunked.flatten(pw.this.chunk)
     # Asymmetric-retrieval models (e5, bge) want a marker prepended to the
     # embedded text only; chunk_id and the stored text stay prefix-free.
+    assert config.embedder is not None  # enforced by for_indexer()
     doc_prefix = config.embedder.document_prefix
     embed_input = (
         pw.apply_with_type(lambda t, _p=doc_prefix: _p + t, str, pw.this.chunk)
@@ -447,6 +449,7 @@ def _write_sink(table: pw.Table, config: ServietteConfig) -> None:
     """
 
     vdb = config.vector_db
+    assert vdb is not None  # enforced by for_indexer()
     # Backends storing native JSON metadata, keyed by chunk_id.
     plain = table.select(
         chunk_id=pw.this.chunk_id,

@@ -5,6 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from typing_extensions import Self
+
 
 class IndexNotReadyError(RuntimeError):
     """The vector store exists in config but has no data yet.
@@ -68,7 +70,7 @@ class AsyncVectorAccessor(ABC):
 
         return {}
 
-    async def __aenter__(self) -> "AsyncVectorAccessor":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc: object) -> None:

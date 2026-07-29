@@ -16,10 +16,10 @@ from serviette.config.schema import (
     QdrantConfig,
     S3Source,
     ServerConfig,
+    ServietteConfig,
     SharePointSource,
     Source,
     SplitterConfig,
-    ServietteConfig,
     WeaviateConfig,
     load_config,
 )
@@ -40,10 +40,10 @@ __all__ = [
     "QdrantConfig",
     "S3Source",
     "ServerConfig",
+    "ServietteConfig",
     "SharePointSource",
     "Source",
     "SplitterConfig",
-    "ServietteConfig",
     "WeaviateConfig",
     "load_config",
 ]

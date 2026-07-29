@@ -11,6 +11,8 @@ import pytest
 
 weaviate = pytest.importorskip("weaviate")
 
+from serviette.config.schema import WeaviateConfig
+from serviette.server.accessors.weaviate import WeaviateAccessor
 from tests.dockerutil import (
     docker_available,
     run_container,
@@ -18,8 +20,6 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from serviette.config.schema import WeaviateConfig
-from serviette.server.accessors.weaviate import WeaviateAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

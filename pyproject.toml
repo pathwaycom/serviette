@@ -68,7 +68,7 @@ all = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "ruff>=0.4",
+    "ruff>=0.16,<0.17",
     "mypy>=1.8",
     # Clients for the per-backend integration tests (each test skips when
     # Docker or its client is unavailable).

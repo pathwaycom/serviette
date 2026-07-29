@@ -12,6 +12,8 @@ import pytest
 
 pytest.importorskip("qdrant_client")
 
+from serviette.config.schema import QdrantConfig
+from serviette.server.accessors.qdrant import QdrantAccessor
 from tests.dockerutil import (
     docker_available,
     run_container,
@@ -19,8 +21,6 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from serviette.config.schema import QdrantConfig
-from serviette.server.accessors.qdrant import QdrantAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

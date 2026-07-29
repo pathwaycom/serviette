@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from tests.integration_common import run_backend_scenario
 from serviette.config.schema import DuckDbConfig
 from serviette.server.accessors.duckdb import DuckDbAccessor
+from tests.integration_common import run_backend_scenario
 
 pytestmark = pytest.mark.slow
 

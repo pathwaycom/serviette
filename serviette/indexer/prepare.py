@@ -24,12 +24,21 @@ probe embedding call).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import asyncio
 import logging
+from pathlib import Path
 
-from serviette.config.schema import ServietteConfig
+from serviette.config.schema import (
+    ChromaConfig,
+    DuckDbConfig,
+    MilvusConfig,
+    MongoDbConfig,
+    PgVectorConfig,
+    PineconeConfig,
+    QdrantConfig,
+    ServietteConfig,
+    WeaviateConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +47,7 @@ def resolve_embedding_dimension(config: ServietteConfig) -> int:
     explicit = getattr(config.vector_db, "embedding_dimension", None)
     if explicit:
         return int(explicit)
+    assert config.embedder is not None  # enforced by for_indexer()
     if config.embedder.type == "mock":
         from serviette.testing import EMBED_DIM
 
@@ -45,13 +55,16 @@ def resolve_embedding_dimension(config: ServietteConfig) -> int:
     from serviette.indexer.graph import build_xpack_embedder
 
     logger.info("Resolving the embedding dimension with a probe embedding call")
-    return int(build_xpack_embedder(config.embedder).get_embedding_dimension())
+    embedder = build_xpack_embedder(config.embedder)
+    # xpack embedders subclass pw.UDF and add get_embedding_dimension().
+    return int(embedder.get_embedding_dimension())  # type: ignore[attr-defined]
 
 
 def prepare_backend(config: ServietteConfig) -> None:
     """Create the vector-DB target for ``config`` if it does not exist."""
 
     vdb = config.vector_db
+    assert vdb is not None  # enforced by for_indexer() before we are called
     if vdb.type == "qdrant":
         _prepare_qdrant(config)
     elif vdb.type == "duckdb":
@@ -74,6 +87,8 @@ def _prepare_pgvector(config: ServietteConfig) -> None:
     import asyncpg
 
     vdb = config.vector_db
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, PgVectorConfig)
     dimension = resolve_embedding_dimension(config)
 
     async def go() -> None:
@@ -107,6 +122,8 @@ def _prepare_milvus(config: ServietteConfig) -> None:
     from pymilvus import DataType, MilvusClient
 
     vdb = config.vector_db
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, MilvusConfig)
     kwargs = {"uri": vdb.resolved_uri()}
     if vdb.token:
         kwargs["token"] = vdb.token
@@ -136,6 +153,8 @@ def _prepare_chroma(config: ServietteConfig) -> None:
     import chromadb
 
     vdb = config.vector_db
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, ChromaConfig)
     client = chromadb.HttpClient(
         host=vdb.host,
         port=vdb.port,
@@ -154,6 +173,8 @@ def _prepare_weaviate(config: ServietteConfig) -> None:
     from weaviate.connect import ConnectionParams
 
     vdb = config.vector_db
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, WeaviateConfig)
     auth = weaviate.auth.AuthApiKey(vdb.api_key) if vdb.api_key else None
     client = weaviate.WeaviateClient(
         connection_params=ConnectionParams.from_params(
@@ -200,6 +221,8 @@ def _prepare_qdrant(config: ServietteConfig) -> None:
     from serviette.server.accessors.qdrant import QDRANT_VECTOR_NAME
 
     vdb = config.vector_db
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, QdrantConfig)
     client = QdrantClient(url=vdb.rest_url(), api_key=vdb.api_key)
     try:
         if not client.collection_exists(vdb.collection):
@@ -228,6 +251,8 @@ def _prepare_pinecone(config: ServietteConfig) -> None:
     from pinecone import Pinecone, ServerlessSpec
 
     vdb = config.vector_db
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, PineconeConfig)
     api_key = vdb.api_key or os.environ.get("PINECONE_API_KEY")
     pc = Pinecone(api_key=api_key, host=vdb.host)
     if not pc.has_index(vdb.index_name):
@@ -248,7 +273,9 @@ def _prepare_mongodb(config: ServietteConfig) -> None:
     from pymongo.operations import SearchIndexModel
 
     vdb = config.vector_db
-    client = MongoClient(vdb.connection_string)
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, MongoDbConfig)
+    client: MongoClient = MongoClient(vdb.connection_string)
     try:
         db = client[vdb.database]
         if vdb.collection not in db.list_collection_names():
@@ -332,6 +359,8 @@ def _prepare_duckdb(config: ServietteConfig) -> None:
     import duckdb
 
     vdb = config.vector_db
+    # prepare_backend dispatches on vdb.type, so the narrow type holds.
+    assert isinstance(vdb, DuckDbConfig)
     Path(vdb.path).parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect()
     try:

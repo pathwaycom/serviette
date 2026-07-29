@@ -12,6 +12,8 @@ import pytest
 
 chromadb = pytest.importorskip("chromadb")
 
+from serviette.config.schema import ChromaConfig
+from serviette.server.accessors.chroma import ChromaAccessor
 from tests.dockerutil import (
     docker_available,
     run_container,
@@ -19,8 +21,6 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from serviette.config.schema import ChromaConfig
-from serviette.server.accessors.chroma import ChromaAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

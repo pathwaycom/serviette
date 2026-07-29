@@ -10,14 +10,15 @@ from __future__ import annotations
 import socket
 import subprocess
 import time
-from typing import Callable
+from collections.abc import Callable
 
 
 def docker_available() -> bool:
     try:
         proc = subprocess.run(
-            ["docker", "info"], capture_output=True, timeout=15
-        )
+            ["docker", "info"], capture_output=True, timeout=15,
+        check=False,
+    )
         return proc.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
@@ -68,7 +69,9 @@ def run_container(
     cmd.append(image)
     if command:
         cmd += command
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+        check=False,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"docker run failed: {result.stderr}")
     return result.stdout.strip()
@@ -76,7 +79,8 @@ def run_container(
 
 def stop_container(container_id: str) -> None:
     subprocess.run(
-        ["docker", "stop", container_id], capture_output=True, timeout=60
+        ["docker", "stop", container_id], capture_output=True, timeout=60,
+        check=False,
     )
 
 

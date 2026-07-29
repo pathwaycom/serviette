@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
 
@@ -218,7 +219,7 @@ def dump_yaml(config: dict[str, Any]) -> str:
 class Prompter(ABC):
     """Abstracts the three primitives the wizard needs."""
 
-    def info(self, message: str) -> None:  # noqa: D401 - simple passthrough
+    def info(self, message: str) -> None:
         print(message)
 
     @abstractmethod
@@ -394,13 +395,13 @@ class Wizard:
         while True:
             first = not sources
             labels = [label for _, label in SOURCE_TYPES]
-            done_index = None
+            done_index = -1  # sentinel: no "done" option on the first pick
             if not first:
                 done_index = len(labels)
                 labels = labels + ["Done — no more sources"]
             prompt = "Add a document source:" if first else "Add another source?"
             idx = self.p.select(prompt, labels, default_index=0 if first else done_index)
-            if done_index is not None and idx == done_index:
+            if done_index != -1 and idx == done_index:
                 break
             stype = SOURCE_TYPES[idx][0]
             sources.append(self._collect_source(stype))

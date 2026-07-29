@@ -14,6 +14,8 @@ import pytest
 
 pinecone = pytest.importorskip("pinecone")
 
+from serviette.config.schema import PineconeConfig
+from serviette.server.accessors.pinecone import PineconeAccessor
 from tests.dockerutil import (
     docker_available,
     free_port_range,
@@ -22,8 +24,6 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import run_backend_scenario
-from serviette.config.schema import PineconeConfig
-from serviette.server.accessors.pinecone import PineconeAccessor
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

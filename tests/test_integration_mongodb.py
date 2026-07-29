@@ -14,6 +14,9 @@ import pytest
 
 pymongo = pytest.importorskip("pymongo")
 
+from serviette.config.schema import MongoDbConfig
+from serviette.server.accessors.mongodb import MongoDbAccessor
+from serviette.testing import fake_embedding
 from tests.dockerutil import (
     docker_available,
     run_container,
@@ -21,9 +24,6 @@ from tests.dockerutil import (
     wait_until,
 )
 from tests.integration_common import ALPHA, run_backend_scenario
-from serviette.config.schema import MongoDbConfig
-from serviette.server.accessors.mongodb import MongoDbAccessor
-from serviette.testing import fake_embedding
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

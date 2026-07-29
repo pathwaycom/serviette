@@ -63,7 +63,8 @@ def _driver(args: list[str], cache_dir: Path, attempts: int = 4) -> object:
             capture_output=True,
             text=True,
             timeout=180,
-        )
+        check=False,
+    )
         if proc.returncode == 0:
             marker = "__RESULT__"
             line = next(ln for ln in proc.stdout.splitlines() if ln.startswith(marker))

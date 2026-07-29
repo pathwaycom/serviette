@@ -77,6 +77,8 @@ def create_app(
     """
 
     config.for_server()
+    # for_server() guarantees the sections; narrow them for the type checker.
+    assert config.vector_db is not None and config.embedder is not None
 
     embedder = embedder or build_embedder(config.embedder)
     accessor = accessor or build_accessor(config.vector_db)
@@ -180,6 +182,7 @@ def create_app(
 
     # Asymmetric-retrieval models (e5, bge) expect a query-side marker; the
     # indexer applies the matching document_prefix. Empty for symmetric models.
+    backend_type = config.vector_db.type
     query_prefix = config.embedder.query_prefix
     rerank_candidates = config.reranker.candidates if config.reranker else 0
 
@@ -196,6 +199,7 @@ def create_app(
 
         queries = [query]
         if decompose is not None:
+            assert llm is not None  # validated at startup when decompose is set
             queries = await decompose_query(llm, query, decompose.max_subqueries)
 
         async def fetch(q: str) -> list[dict[str, Any]]:
@@ -265,7 +269,7 @@ def create_app(
     async def stats() -> dict[str, Any]:
         # Best-effort observability: backend identity + whatever the accessor
         # can answer cheaply. Never fails the endpoint over a backend hiccup.
-        data: dict[str, Any] = {"backend": config.vector_db.type}
+        data: dict[str, Any] = {"backend": backend_type}
         try:
             data.update(await accessor.stats())
         except Exception:  # noqa: BLE001 - stats are advisory

@@ -18,8 +18,9 @@ import asyncio
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 import yaml
@@ -59,6 +60,7 @@ def run_indexer(cfg: Path, _legacy_cache_dir: Path | None = None) -> None:
         capture_output=True,
         text=True,
         timeout=240,
+        check=False,
     )
     assert proc.returncode == 0, f"indexer failed:\n{proc.stderr[-3000:]}"
 

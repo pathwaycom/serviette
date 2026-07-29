@@ -19,6 +19,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from serviette.config.schema import PgVectorConfig
+from serviette.server.accessors.pgvector import PgVectorAccessor
+from serviette.testing import fake_embedding
 from tests.dockerutil import (
     docker_available,
     free_port,
@@ -26,9 +29,6 @@ from tests.dockerutil import (
     stop_container,
     wait_until,
 )
-from serviette.config.schema import PgVectorConfig
-from serviette.server.accessors.pgvector import PgVectorAccessor
-from serviette.testing import fake_embedding
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -121,6 +121,7 @@ def _run_indexer(cfg: Path, cache_dir: Path) -> None:
         capture_output=True,
         text=True,
         timeout=180,
+        check=False,
     )
     assert proc.returncode == 0, f"indexer failed:\n{proc.stderr[-3000:]}"
 
