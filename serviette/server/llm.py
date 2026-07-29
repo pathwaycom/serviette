@@ -84,9 +84,29 @@ class OpenAIChat:
     def __init__(self, config) -> None:
         self._model = config.model or "gpt-4o-mini"
         self._api_key = config.api_key
-        extra = config.model_dump(exclude={"type", "model", "api_key"})
+        # ``temperature`` is a per-request sampling knob, not a client kwarg.
+        self._temperature = getattr(config, "temperature", None)
+        self._reasoning_effort = getattr(config, "reasoning_effort", None)
+        # Configured default system prompt (None -> the strict built-in one);
+        # an explicit ``system_prompt=`` argument to ``complete`` still wins
+        # (adaptive RAG injects its no-answer marker that way).
+        self._system_prompt = getattr(config, "system_prompt", None)
+        extra = config.model_dump(
+            exclude={
+                "type", "model", "api_key", "temperature", "system_prompt",
+                "reasoning_effort",
+            }
+        )
         self._client_kwargs = {k: v for k, v in extra.items() if v is not None}
         self._client = None
+
+    def _request_kwargs(self) -> dict:
+        kwargs: dict = {}
+        if self._temperature is not None:
+            kwargs["temperature"] = self._temperature
+        if self._reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self._reasoning_effort
+        return kwargs
 
     def _ensure_client(self):
         if self._client is None:
@@ -102,9 +122,15 @@ class OpenAIChat:
         resp = await client.chat.completions.create(
             model=self._model,
             messages=[
-                {"role": "system", "content": system_prompt or _DEFAULT_SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": system_prompt
+                    or self._system_prompt
+                    or _DEFAULT_SYSTEM_PROMPT,
+                },
                 {"role": "user", "content": _build_prompt(query, context)},
             ],
+            **self._request_kwargs(),
         )
         return resp.choices[0].message.content or ""
 
@@ -113,6 +139,7 @@ class OpenAIChat:
         resp = await client.chat.completions.create(
             model=self._model,
             messages=[{"role": "user", "content": prompt}],
+            **self._request_kwargs(),
         )
         return resp.choices[0].message.content or ""
 

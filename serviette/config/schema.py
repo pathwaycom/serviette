@@ -445,6 +445,21 @@ class LLMConfig(BaseModel):
     type: str = "openai"
     model: str | None = None
     api_key: str | None = None
+    # Sampling temperature for completions. None = provider default. Set 0 for
+    # reproducible benchmark runs; leave unset for reasoning models that
+    # reject non-default temperatures.
+    temperature: float | None = None
+    # Reasoning effort for reasoning models (gpt-5*, o*): "minimal" | "low" |
+    # "medium" | "high". None = provider default. Lower efforts cut latency
+    # and output-token cost; non-reasoning models reject the parameter, so
+    # leave unset for them.
+    reasoning_effort: str | None = None
+    # System prompt for /rag answers. None = the built-in strictly-grounded
+    # default ("answer only from the provided context") — right for private
+    # corpora where hallucinated outside knowledge is unacceptable. Override
+    # to allow blending the model's own knowledge with the context (e.g. for
+    # public-domain corpora the model has largely memorized).
+    system_prompt: str | None = None
 
 
 class AdaptiveRagConfig(BaseModel):
@@ -537,6 +552,11 @@ class IndexerConfig(BaseModel):
     # instead of RAM (requires a Pathway build with pw.run's
     # udf_cache_directory). Point it at a real disk, not tmpfs.
     udf_cache_directory: str | None = None
+    # Advanced. First port of the inter-worker communication range used by
+    # ``pathway spawn`` when workers > 1 (each worker binds first_port + index).
+    # Shift it when several Pathway applications share a host — the default
+    # range collides and workers hang retrying "connection refused".
+    spawn_first_port: int = Field(default=10000, ge=1024, le=65000)
     # Advanced. Base port of the Pathway engine's built-in monitoring HTTP
     # server: every worker process serves GET /status (JSON snapshot) and
     # GET /metrics (Prometheus) on 127.0.0.1:(port + worker index).

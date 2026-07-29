@@ -22,7 +22,7 @@ from serviette.indexer.graph import run_indexer
 logger = logging.getLogger(__name__)
 
 
-def _spawn_workers(workers: int, argv: list[str]) -> int:
+def _spawn_workers(workers: int, argv: list[str], first_port: int = 10000) -> int:
     logger.info("Spawning %d Pathway worker processes via `pathway spawn`", workers)
     command = [
         sys.executable,
@@ -33,6 +33,8 @@ def _spawn_workers(workers: int, argv: list[str]) -> int:
         str(workers),
         "--threads",
         "1",
+        "--first-port",
+        str(first_port),
         sys.executable,
         "-m",
         "serviette.cli",
@@ -66,6 +68,7 @@ def main(argv: list[str] | None = None) -> None:
             _spawn_workers(
                 config.indexer.workers,
                 ["--config", args.config, "--log-level", args.log_level],
+                first_port=config.indexer.spawn_first_port,
             )
         )
 

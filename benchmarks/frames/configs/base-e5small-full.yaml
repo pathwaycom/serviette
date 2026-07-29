@@ -1,0 +1,39 @@
+# FRAMES star-run base: the FULL 2023-06-01 dump (~6.5M articles) with the
+# same embedder/chunking as the working corpus, into a separate collection —
+# both stay queryable side by side. Indexing is a multi-day background job
+# (measured ~2.6k chunks/min on 96 CPU cores); retrieval-feature overlays are
+# applied the same way as for the working corpus (see configs/README.md).
+#
+# spawn_first_port is shifted from the default 10000: other Pathway
+# applications on a shared host (CI agents) occupy the default range, and
+# colliding workers hang retrying "connection refused".
+pathway_license_key: ${PATHWAY_LICENSE_KEY}
+sources:
+  - type: fs
+    path: ${FRAMES_DATA}/corpus-full
+    mode: static
+vector_db:
+  type: qdrant
+  host: 127.0.0.1
+  rest_port: 6343
+  grpc_port: 6344
+  collection: frames_e5small_full
+embedder:
+  type: sentence_transformer
+  model: intfloat/e5-small-v2
+  query_prefix: "query: "
+  document_prefix: "passage: "
+splitter:
+  type: token_count
+  chunk_size: 512
+  chunk_overlap: 50
+indexer:
+  workers: 8
+  spawn_first_port: 12000
+persistence:
+  enabled: true
+  backend: filesystem
+  path: ${FRAMES_DATA}/persist-e5small-full
+server:
+  port: 8987
+  serve_frontend: false

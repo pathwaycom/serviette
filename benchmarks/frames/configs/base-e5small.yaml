@@ -1,0 +1,39 @@
+# FRAMES bench — indexer + retrieval base: local free e5-small-v2 into Qdrant.
+# ${FRAMES_DATA} points at the data dir (questions + corpora); the Qdrant
+# instance is a long-lived container so re-runs never re-embed (persistence
+# below skips unchanged files).
+pathway_license_key: ${PATHWAY_LICENSE_KEY}
+sources:
+  - type: fs
+    path: ${FRAMES_DATA}/corpus-gold
+    mode: static
+  - type: fs
+    path: ${FRAMES_DATA}/corpus-distractors
+    mode: static
+vector_db:
+  type: qdrant
+  host: 127.0.0.1
+  rest_port: 6343
+  grpc_port: 6344
+  collection: frames_e5small
+embedder:
+  type: sentence_transformer
+  model: intfloat/e5-small-v2
+  query_prefix: "query: "
+  document_prefix: "passage: "
+splitter:
+  type: token_count
+  chunk_size: 512
+  chunk_overlap: 50
+# Single worker on purpose: the 0.31.2-dev build fails multiprocess spawn
+# ("invalid process ID"); torch's intra-op parallelism saturates the cores for
+# batch sentence-transformer encoding anyway.
+indexer:
+  workers: 8
+persistence:
+  enabled: true
+  backend: filesystem
+  path: ${FRAMES_DATA}/persist-e5small
+server:
+  port: 8987
+  serve_frontend: false
