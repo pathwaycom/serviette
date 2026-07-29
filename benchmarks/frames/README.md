@@ -38,10 +38,12 @@ Headlines, measured on the paper's full Wikipedia dump under the paper's
 permissive protocol (full analysis and statistics in
 [REPORT.md](REPORT.md)):
 
-- **serviette single-shot RAG + gpt-5: 73.7%** — above the paper's 5-step
-  agentic pipeline (66.0%) and its oracle ceiling (72.9%); the retrieval
-  gain over the same model without retrieval (+5.2 pp) is pair-tested at
-  z = 4.05.
+- **Adding serviette to gpt-5 yields a paired +5.2 pp over the same model
+  without retrieval** (z = 4.1 on 824 shared questions); under grounding,
+  the adaptive-retrieval flag adds **+11.5 pp** (z = 7.5). For context, the
+  absolute score (73.7%) exceeds every number in the paper, including its
+  5-step agent (66.0%) and oracle (72.9%) — a comparison dominated by
+  generator strength, which the report isolates.
 - **Retrieval recall on the identical corpus: 0.50 vs 0.15** for the
   paper's BM25 (0.21 for our reproduction of it) — measured with the
   paper's own metric, no generator involved.

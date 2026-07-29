@@ -2,7 +2,7 @@
 
 **Status: complete.** Two secondary measurements (the reasoning-effort
 ablation and grounded weak-model rows) are deferred to future work — see
-§5.5 and §7.
+§7 and §8.
 
 ## Abstract
 
@@ -15,18 +15,27 @@ paper's corpus exactly (the TFDS `wikipedia/20230601.en` dump, 5.22M articles,
 separated regimes: *permissive* (the paper's protocol — the generator may
 combine retrieved context with parametric knowledge) and *grounded* (strictly
 context-only — serviette's product default, deliberately stricter than the
-paper). On the identical corpus and metric, serviette's retrieval reaches
-**0.50 gold-article recall versus 0.15 for the paper's BM25 baseline** (0.21
-for our reimplementation of it). End-to-end under the paper's protocol,
-serviette with gpt-5 attains **73.7% accuracy — above the paper's five-step
-agentic pipeline (66.0%) and its oracle ceiling (72.9%)** — with the
-generator's own contribution isolated by no-retrieval baselines across three
-model tiers. Retrieval's paired contribution is significant for the weakest
-tier (+3.8 pp, z = 2.33) and the strongest (+5.2 pp, z = 4.05) and washes
-out mid-tier (−2.1 pp, z = −1.24), a U-shaped pattern we analyze. A failure
-taxonomy attributes 62% of remaining errors to retrieval misses and bounds
-autorater noise at ≈3 pp. All corpora, configurations, raw per-question
-outputs, and scripts are pinned and included.
+paper). The system-attributable results: on the identical corpus and
+metric, serviette's retrieval reaches **0.50 gold-article recall versus
+0.15 published / 0.21 reproduced for the paper's BM25 baseline**; adding
+serviette to gpt-5 under the paper's protocol yields a **paired +5.2 pp
+over the same model without retrieval** (McNemar z = 4.1 on 824 shared
+questions); and under grounding, refusal-triggered **adaptive retrieval —
+one product configuration flag — lifts accuracy 41.3% → 52.8%** (z = 7.5),
+the largest single effect we measure, anticipated by an independently
+measured recall-vs-k curve. For context only: the absolute permissive
+score, 73.7%, exceeds every number the paper reports, including its
+five-step agentic pipeline (66.0%) and oracle (72.9%) — but most of that
+gap belongs to the 2026 generator, whose no-retrieval baseline alone scores
+68.5% on this 2024 benchmark; we therefore foreground paired deltas, not
+absolute comparisons. Across our three-model ladder the paired gain is
+significant at both ends (+3.8 pp weakest, +5.2 pp strongest) with no
+measurable effect mid-tier; whether this is a genuinely non-monotonic
+pattern is left as a hypothesis pending replication. A failure taxonomy
+attributes 62% of remaining permissive errors to retrieval misses and
+bounds the autorater's false-negative rate at ≈3 pp (false positives
+unaudited). All corpora, configurations, raw per-question outputs, and
+scripts are pinned and included.
 
 ## 1. Scope and claims
 
@@ -35,18 +44,31 @@ This report makes three claims and explicitly does not make several others.
 **Claimed:**
 1. On the paper's own corpus and retrieval metric, serviette's single-shot
    retrieval stack outperforms the paper's naive BM25 baseline ~2.4–3.3×
-   (0.50 vs 0.15 published / 0.21 reproduced).
-2. Under the paper's evaluation protocol, serviette + gpt-5 exceeds every
-   number reported in the paper, including its oracle; the retrieval
-   component's contribution is isolated and pair-tested.
-3. Retrieval value depends non-monotonically on generator strength; for a
-   strictly grounded system the binding constraint is retrieval recall, and
-   error analysis quantifies this.
+   (0.50 vs 0.15 published / 0.21 reproduced; metric-level uncertainty
+   discussed in §5.1).
+2. serviette's retrieval produces a significant paired gain on a frontier
+   generator under the paper's protocol (+5.2 pp, z = 4.1), and adaptive
+   retrieval under grounding produces the largest effect we measure
+   (+11.5 pp, z = 7.5). The absolute permissive score exceeding every
+   number in the paper is offered as context, not as a claim about the
+   system — that comparison is dominated by generator strength (§5.2).
+3. For a strictly grounded system the binding constraint is retrieval
+   recall: 60% of grounded errors are refusals, the oracle ceiling sits
+   ≈27 pp above the fixed-k configuration, and adaptive retrieval recovers
+   42% of that headroom.
+
+**Observed, not claimed:** paired retrieval gains are significant at both
+ends of the model ladder and absent in the middle. The "non-monotonic in
+generator strength" reading and its proposed mechanism are hypotheses: the
+middle point is a single-run null result, and per-row sub-query generation
+confounds reader strength with retrieval quality (§6.1).
 
 **Not claimed:** superiority over the paper's *system* on matched generators
 (their generator is retired; we bracket its strength instead — §5.2); any
 number under the grounded regime being comparable to the paper (§4.3); that
-FRAMES measures pure retrieval for frontier models (it does not — §6.1).
+FRAMES measures pure retrieval for frontier models (it does not — §6.1);
+that the mid-tier null result establishes harm from retrieval (it is
+statistically indistinguishable from no effect).
 
 ## 2. System under test
 
@@ -108,7 +130,11 @@ response objects for judge calls and for the direct-call rungs
 server* was not usage-logged (a known instrumentation gap) and is estimated
 from token arithmetic. Total API spend for every number in this report:
 ≈$128 (per-run figures in `results/*.jsonl` summaries). Indexing: 75 h on
-96 CPU cores (8 Pathway workers × 12 threads, ~2,700 chunks/min).
+96 CPU cores (8 Pathway workers × 12 threads, ~2,700 chunks/min). One
+operational observation for practitioners: at equal API conditions,
+per-question generation latency roughly doubled from the grounded to the
+permissive regime (≈46 s → ≈96 s), indicating substantially longer
+reasoning traces, billed as output tokens.
 
 ### 4.3 Two regimes, never mixed
 **Grounded** (product default): the system prompt forbids outside knowledge;
@@ -153,9 +179,9 @@ retrieval-pipeline reproducibility.)
 
 Recall grows ≈ logarithmically in k with no saturation by k=64, and
 decomposition's advantage (+10–15 pp) is stable across the whole range —
-the two mechanisms are complementary, not redundant. This curve also
-predicts the adaptive-retrieval result (§5.4): a refusal-triggered escalation
-to k=32 operates at ≈0.53 recall instead of 0.41.
+the two mechanisms are complementary, not redundant. The curve also
+anticipates the adaptive-retrieval result (§5.4): a refusal-triggered
+escalation to k=32 operates at ≈0.53 recall instead of 0.41.
 
 The BM25 rows involve no index and no part of serviette: they are computed
 by a standalone two-pass streaming scorer (`run_bm25_baseline.py`) directly
@@ -171,6 +197,13 @@ differences). Note the discrepancy's direction: our reimplementation
 credits the baseline with a *stronger* result than its authors published,
 and the headline multiplier is computed against that stronger 0.21 —
 implementation uncertainty is priced against serviette, not for it.
+Two metric-level biases, however, pull in opposite directions and do not
+cancel: chunk-level coverage (≥1 chunk counts an article) reads *higher*
+than the paper's whole-article inclusion, favoring serviette, while the
+stronger reproduction deflates the multiplier, favoring the baseline. The
+2.4–3.3× range therefore carries more uncertainty than its endpoints
+suggest; the *ordering* — serviette well above BM25 on the same corpus —
+is robust, the exact multiplier is indicative.
 Second,
 decomposition — one cheap LLM call — is worth +12 to +21 recall points on
 multi-hop questions, and the quality of the decomposing model matters
@@ -199,9 +232,9 @@ reader".
 
 | Generator | Naive | serviette RAG | Context recall | Δ | McNemar |
 |---|---|---|---|---|---|
-| gpt-4o-mini | 32.9% | 36.7% | 0.404 | +3.8 pp | b=104, c=73, z=+2.33 (p<0.02) |
-| gpt-4o | 49.9% | 47.8% | 0.421 | −2.1 pp | b=86, c=103, z=−1.24 (n.s.) |
-| gpt-5 | 68.5% | **73.7%** | 0.497 | +5.2 pp | b=78, c=35, z=+4.05 (p<10⁻⁴) |
+| gpt-4o-mini | 32.9% | 36.7% | 0.404 | +3.8 pp | b=104, c=73, z=+2.3 (p<0.02) |
+| gpt-4o | 49.9% | 47.8% | 0.421 | −2.1 pp | b=86, c=103, z=−1.2 (n.s.) |
+| gpt-5 | 68.5% | **73.7%** | 0.497 | +5.2 pp | b=78, c=35, z=+4.1 (p<10⁻⁴) |
 | *Gemini-Pro-1.5 (paper)* | *40.8%* | *BM25@4 47.4 · 5-step agent 66.0 · oracle 72.9* | *0.15 (BM25)* | | |
 
 The paper's generator strength (naive 40.8%) is bracketed by our
@@ -217,8 +250,13 @@ constraint. The regime's ceiling was estimated two independent ways:
 - The free proxy — grounded accuracy on the 158 questions whose gold
   articles were fully retrieved: **68.4%**.
 
-The two estimates agree to 0.2 pp, a strong internal-consistency check.
-Reading: perfect retrieval would lift grounded accuracy from 41.3% to
+The two estimates are consistent, but the 0.2 pp agreement should not be
+over-read: the proxy subset is biased toward easier questions (fully
+retrievable gold sets), pushing it up; oracle contexts are truncated for
+the longest questions, pushing the oracle down; and at n=158 the proxy's
+CI is ±3.7 pp — the near-exact match is plausibly two opposing biases
+meeting, not a precision result. Reading: perfect retrieval would lift
+grounded accuracy from 41.3% to
 ≈68% (+27 pp of retrieval headroom); the residual ≈32% error at recall≈1
 (24 post-snapshot gold articles remain unavailable even to the oracle, §3)
 is the grounded reasoning/reading ceiling of the generator itself (note it
@@ -230,39 +268,44 @@ reported in RESULTS.md.
 ### 5.4 Adaptive retrieval under grounding
 
 `rag.adaptive` converts refusals into re-retrieval at k=16, then k=32 —
-targeting exactly the dominant failure mode of §5.3, and its outcome was
-*predicted in advance* by the k-sweep curve (§5.1: escalation should
-operate near 0.53–0.58 recall).
+targeting exactly the dominant failure mode of §5.3. Its outcome was
+anticipated by the independently measured recall-vs-k curve (§5.1:
+escalation to k=32 should operate near 0.53–0.58 recall); we note the
+sweep completed before this run did, but make no formal preregistration
+claim.
 
 **Result: 52.8% accuracy at 0.572 context recall** — versus 41.3% / 0.482
 for fixed k=8. Paired on identical questions: adaptivity fixed 128 answers
-and broke 33 (McNemar z = +7.49), the largest single effect measured in
+and broke 33 (McNemar z = +7.5), the largest single effect measured in
 this evaluation. Adaptive retrieval recovers 42% of the grounded regime's
 retrieval headroom (41.3 → 52.8 of a 68.2 ceiling) at the cost of extra
 context tokens only on the questions that refused — the single-shot
 analogue of the paper's five-step agentic gain (+25.2 pp on its weak
 generator), realized here inside one product configuration flag.
 
-### 5.5 Reasoning-effort ablation
-
-A natural direction for future work: the `llm.reasoning_effort`
-configuration knob ships in the product, and the accuracy/cost/latency
-trade-off it controls is practically relevant — at equal API conditions,
-per-question latency roughly doubled from grounded to permissive mode
-(≈46 s → ≈96 s), indicating substantially longer reasoning traces whose
-tokens are billed as output.
-
 ## 6. Analysis
 
-### 6.1 Retrieval value is U-shaped in generator strength
-The weakest model gains significantly (reading substitutes for memory it
-lacks); the frontier reasoner gains significantly (it arbitrates between
-context and memory — b=78 fixed vs c=35 broken); the mid-tier model gains
-and loses in equal measure (z = −1.24). The paper's own +25.2 pp from
-five-step agentic retrieval on a weak generator is the complementary
-mechanism: iteration is how weaker models exploit retrieval. For frontier
-models on a memorized public corpus, single-shot retrieval still adds a
-significant +5.2 pp — but the honest product case for RAG is corpora the
+### 6.1 Retrieval value across generator strength: two significant ends,
+an open middle
+
+What the data establish: significant paired gains at both ends of the
+ladder (+3.8 pp weakest, +5.2 pp strongest) and no measurable effect for
+the mid-tier model — a single-run null (z = −1.2), not an established
+"wash-out". A non-monotonic ("U-shaped") pattern is one reading, and a
+mechanistic story fits it — the weakest model substitutes reading for
+memory it lacks, the frontier reasoner arbitrates between context and
+memory (b=78 fixed vs c=35 broken), the mid-tier defers to incomplete
+context — but we present it as a hypothesis, for two reasons. First,
+establishing the shape requires the middle point to be a *replicated*
+null, and generation-run variance is unmeasured (§7.1). Second, a
+confound: each row's sub-queries come from its own generator, so gpt-5
+enjoys both a stronger reader and stronger retrieval (recall 0.497 vs
+0.404); the arbitration story is not separable, on these data, from
+"better decomposition → better context". A cheap disentangling experiment
+— one fixed set of sub-queries served to all three readers — is listed in
+§8. What is not hypothetical: the paper's own +25.2 pp from five-step
+agentic retrieval on a weak generator shows iteration is how weaker models
+exploit retrieval, and the honest product case for RAG is corpora the
 model has *not* memorized (fresh and private data), where the grounded
 regime is the operative one and recall is decisive.
 
@@ -275,15 +318,25 @@ regime is the operative one and recall is decisive.
 | judge_error | 11.5% | autorater graded an equivalent answer wrong |
 | dataset_issue | 6.0% | consistent with the authors' own 5.5% staleness filtering |
 
-### 6.3 Measurement error bound
-Judge errors are 25/824 = 3.0% of all questions (downward only, by
-construction of the audit): headline accuracies are conservative by up to
-≈3 pp. The 94% mini↔gpt-4o judge agreement is consistent with this bound.
+### 6.3 Autorater error: a one-sided estimate
+The failure audit (§6.2) examined only questions the judge marked wrong, so
+by construction it can detect only *false negatives* — correct answers
+misgraded: 25/824 = 3.0%. False positives (wrong answers credited) were
+not audited at all, so no two-sided noise bound exists, and headline
+accuracies cannot be called conservative on this evidence alone. The
+auditor is moreover itself an LLM, whose errors may correlate with the
+judge's. The 94% mini↔gpt-4o agreement (measured on the predecessor
+answer set, §3) is consistent with a low-single-digit error rate; a proper
+bound requires auditing a sample of *passed* verdicts — listed in §8.
 
 ## 7. Limitations
 
-1. **Generator non-determinism:** gpt-5 rejects temperature control; each
-   number is a single run (n=1 per configuration; per-question CI ±3.4 pp).
+1. **Generator non-determinism and run variance:** gpt-5 rejects
+   temperature control; each accuracy is a single run (n=1 per
+   configuration; per-question CI ±3.4 pp). Re-run variance was measured
+   only for the retrieval pipeline (±0.001 recall, §5.1) — never for
+   generation, which weakens every conclusion resting on small deltas,
+   most of all the mid-tier null (§6.1).
 2. **Judge is a small model** (validated, bounded, but not human).
 3. **Dataset contamination:** FRAMES (2024, Wikipedia) is inside 2026
    models' training data; permissive numbers partly measure memory. The
@@ -298,14 +351,26 @@ construction of the audit): headline accuracies are conservative by up to
 
 ## 8. Future work
 
-Native sparse-vector (BM25) hybrid at full-dump scale: the upstream
-connector support has landed in Pathway
-([schema-driven named dense+sparse vectors in `pw.io.qdrant.write`](https://github.com/pathwaycom/pathway/commit/972e56cd1b),
-[sparse records in `pw.io.pinecone.write`](https://github.com/pathwaycom/pathway/commit/fdbedb1c58));
-the serviette integration and a 75 h re-index are scheduled separately. On
-the 80k working corpus the BM25 leg was worth +4 recall points; the
-full-dump gain is an open measurement. Further directions: the
-reasoning-effort ablation (§5.5) and grounded weak-model rows (§7).
+In rough priority order:
+
+1. **Native sparse-vector (BM25) hybrid at full-dump scale.** The upstream
+   connector support has landed in Pathway
+   ([schema-driven named dense+sparse vectors in `pw.io.qdrant.write`](https://github.com/pathwaycom/pathway/commit/972e56cd1b),
+   [sparse records in `pw.io.pinecone.write`](https://github.com/pathwaycom/pathway/commit/fdbedb1c58));
+   the serviette integration and a 75 h re-index are scheduled separately.
+   On the 80k working corpus the BM25 leg was worth +4 recall points; the
+   full-dump gain is an open measurement.
+2. **Replication of the model ladder** — repeated runs per configuration
+   (generation variance) and grounded rows for the weaker models: the
+   grounded regime, the most product-relevant one, is currently
+   characterized on one model in one run.
+3. **Disentangling the ladder confound** — one fixed set of sub-queries
+   (e.g., gpt-5's) served to all three readers, separating reader strength
+   from retrieval quality (§6.1).
+4. **A two-sided autorater bound** — auditing a sample of *passed*
+   verdicts, ideally with a non-LLM (human) spot check (§6.3).
+5. **The reasoning-effort ablation** — the `llm.reasoning_effort` product
+   knob against the latency observation of §4.2.
 
 ## 9. Reproducibility
 
