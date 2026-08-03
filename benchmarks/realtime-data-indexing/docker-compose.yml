@@ -1,49 +1,33 @@
 # Self-contained benchmark: Qdrant + serviette indexer + serviette server.
 #
+# The serviette image is built from the repo checkout (build context ../..)
+# with the released Pathway from PyPI — no external mounts or prebuilt
+# artifacts; `docker compose build` (or the first `up`) is all the setup.
+#
 # Parametrized by env vars:
 #   BENCH_SIZE         dataset folder under ./datasets (default 100mb)
 #   BENCH_SERVER_PORT  host port for the serviette server API (default 8300)
 #   BENCH_QDRANT_PORT  host port for Qdrant REST (readiness probes, default 8301)
-#
-# NOTE (dev setup): until a Pathway release ships the qdrant connector, the
-# serviette containers run against a pathway source tree + a prebuilt engine
-# (mounted read-only, paths below). The published version of this benchmark
-# will replace the mounts with `pip install serviette[qdrant,local]`.
+#   BENCH_HF_CACHE     host Hugging Face cache dir (default ~/.cache/huggingface)
 
 x-serviette: &serviette
-  image: python:3.12-slim
-  working_dir: /home/sergey/serviette
+  build:
+    context: ../..
+    dockerfile: benchmarks/realtime-data-indexing/Dockerfile
+  image: serviette-bench
   environment: &serviette-env
-    # Default: the dev worktree + local venv; override with BENCH_PYTHONPATH
-    # to run against an installed wheel (e.g. the nightly venv).
-    PYTHONPATH: "${BENCH_PYTHONPATH:-/opt/pathway-src/python:/home/sergey/serviette:/home/sergey/serviette/.venv312/lib/python3.12/site-packages:/home/sergey/serviette/.venv312/lib64/python3.12/site-packages}"
     PATHWAY_LICENSE_KEY: ${PATHWAY_LICENSE_KEY:-}
     HF_HOME: /hf-cache
     # Model cache is pre-warmed by run_bench on the host; containers never
     # touch the network (8 workers probing HF concurrently hit rate limits).
     HF_HUB_OFFLINE: "1"
-    # The dev-built engine links libs from the pixi toolchain (libpq, libssl…)
-    # and -ffast-math symbols glibc dropped (see compat/finite_shim.c).
-    LD_LIBRARY_PATH: "${BENCH_LD_LIBRARY_PATH-/opt/pixi-lib}"
-    LD_PRELOAD: "${BENCH_LD_PRELOAD-/opt/compat/finite_shim.so}"
     # Hard guarantee that nothing can spend OpenAI quota.
     OPENAI_API_KEY: x
     # Allocator experiment knobs (empty = library defaults).
     _RJEM_MALLOC_CONF: ${BENCH_JEMALLOC_CONF:-}
     MALLOC_ARENA_MAX: ${BENCH_MALLOC_ARENA_MAX:-}
   volumes:
-    - /home/sergey/serviette:/home/sergey/serviette:ro
-    - /mnt/scratch/sergey/serviette-nightly-venv:/opt/nightly-venv:ro
-    # Local-disk copy of the venv overlaid on the same path: keeps NFS out of
-    # the containers' hot path (torch import reads GBs; NFS hiccups froze
-    # runs in D-state). Refresh with rsync after pip installs.
-    - /mnt/scratch/sergey/serviette-venv312:/home/sergey/serviette/.venv312:ro
-    - /mnt/scratch/sergey/iot-pathway-develop-wt/public/pathway/python:/opt/pathway-src/python:ro
-    # Host dir with the toolchain libraries the dev pathway build links
-    # against (conda/pixi env lib dir). Machine-specific; set in .env.
-    - ${PATHWAY_TOOLCHAIN_LIB:-/usr/lib}:/opt/pixi-lib:ro
-    - ./compat:/opt/compat:ro
-    - /mnt/scratch/sergey/hf-cache:/hf-cache:ro
+    - ${BENCH_HF_CACHE:-~/.cache/huggingface}:/hf-cache:ro
     - ${BENCH_DATA_ROOT:-./datasets}/${BENCH_SIZE:-100mb}/docs:/data/docs:ro
     - ./config.yaml:/bench/config.yaml:ro
 

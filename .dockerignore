@@ -1,0 +1,9 @@
+# Keep docker build contexts light: images COPY only pyproject.toml,
+# README.md, LICENSE and serviette/ (see benchmarks/*/Dockerfile).
+.git
+.venv*
+benchmarks
+docs
+tests
+results
+**/__pycache__

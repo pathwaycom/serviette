@@ -25,9 +25,9 @@ splitter:
   type: token_count
   chunk_size: 512
   chunk_overlap: 50
-# Single worker on purpose: the 0.31.2-dev build fails multiprocess spawn
-# ("invalid process ID"); torch's intra-op parallelism saturates the cores for
-# batch sentence-transformer encoding anyway.
+# 8 workers — the maximum `pathway spawn` supports; each runs torch intra-op
+# parallelism on its share of the cores (see base-e5small-full.yaml for the
+# thread/port settings of the full-dump run).
 indexer:
   workers: 8
 persistence:

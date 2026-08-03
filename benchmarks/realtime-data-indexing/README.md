@@ -10,8 +10,8 @@ Measures the two claims that matter for the serviette indexer:
    physical peak memory (PSS: shared pages counted once, not per process).
 
 Everything runs locally and costs nothing: embeddings are computed by a local
-sentence-transformers model (`all-MiniLM-L6-v2`, 384 dims) — **no external
-API calls**.
+sentence-transformers model (`static-retrieval-mrl-en-v1`,
+Matryoshka-truncated to 256 dims) — **no external API calls**.
 
 ## Setup
 
@@ -40,6 +40,11 @@ size is reached. It also samples distinctive articles into `questions.json`;
 each question must retrieve its own article (top-k accuracy sanity check).
 
 ## Running
+
+The serviette image is built from the repo checkout with the released
+Pathway from PyPI (`docker compose build`, run automatically on first use);
+`run_bench.py` pre-warms the local embedding-model cache, so the containers
+themselves never touch the network.
 
 ```bash
 python prepare_dataset.py --size-mb 100     # also: 1000, 3000, 10000

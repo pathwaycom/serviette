@@ -171,8 +171,9 @@ counted once, not once per process. Setup: 96-core CPU host, streaming mode,
 calls; Matryoshka-truncated to 256 dims), 512-token chunks, Qdrant, and
 jemalloc's `background_thread` purging enabled in the indexer containers
 (measured free; it keeps idle workers from retaining freed pages). Numbers
-are from the prebuilt development wheel — the same one the Development
-section installs, so they are reproducible as-is.
+were measured on a nightly Pathway build whose engine matches the released
+wheel (pathway ≥ 0.32.1 — what the benchmark's docker image and the
+Development section install), so they are reproducible as-is.
 
 ### Retrieval accuracy (FRAMES)
 
@@ -326,10 +327,9 @@ architecture and scaling notes live in **[docs/README.md](docs/README.md)**.
 
 ## Development
 
-serviette currently runs against a **development build of Pathway** (the new
-vector-database connectors and the multimodal parsers are not in a released
-Pathway yet). No compilation is needed: CI builds ready-made wheels for
-every commit. From-scratch setup on a fresh machine:
+serviette runs on the released Pathway from PyPI (≥ 0.32.1 — the first
+release with the vector-database connectors). From-scratch setup on a
+fresh machine:
 
 ```bash
 # 0. Prerequisites: Python >= 3.10 (3.12 recommended) and git.
