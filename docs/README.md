@@ -26,22 +26,18 @@ database, so you can scale them independently.
 
 serviette requires **Python ≥ 3.10** (the minimum supported by Pathway).
 
-Until a released Pathway ships the vector-store connectors, serviette installs
-against a prebuilt Pathway development wheel (see the README's
-[Development](../README.md#development) section for the full walkthrough):
-
 ```bash
-pip install -U uv
-uv pip install -e ".[dev,local]" --prerelease=allow \
-    --extra-index-url https://packages.pathway.com/966431ef6ba
+pip install "serviette[openai]"
 ```
+
+(or, from a checkout, `pip install -e ".[dev,local]"` — see the README's
+[Development](../README.md#development) section for the full walkthrough).
 
 Optional extras: `openai` (OpenAI embedders / `/rag`), `local`
 (sentence-transformers), `docling` (layout-aware PDF + Office parsing),
 `ocr` (scanned images), `pyfilesystem` (FTP/SFTP/WebDAV/ZIP sources),
 `gdrive`, `sharepoint`, plus one extra per vector-DB client (`qdrant`,
-`pgvector`, …, or `all`). Once Pathway publishes a release, this section
-collapses to `pip install "serviette[...]"`.
+`pgvector`, …, or `all`).
 
 ---
 

@@ -5,9 +5,8 @@ bucket are indexed by the real indexer (bytes fetched on demand by the
 S3Fetcher), retrieval runs through the DuckDB accessor, and deleting an
 object from the bucket removes its vectors on the next pass.
 
-Requires a Pathway build with s3 ``only_metadata`` support (the 0.31.2.dev
-series); skips
-otherwise, and when Docker or boto3 is unavailable.
+Requires a Pathway build with s3 ``only_metadata`` support (>= 0.32.1);
+skips otherwise, and when Docker or boto3 is unavailable.
 """
 
 from __future__ import annotations

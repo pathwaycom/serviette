@@ -21,12 +21,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pathway>=0.31",
-    # >=0.31.2.dev899: the first build where the xpack imports lazily —
-    # older dev builds crash on import without the
-    # xpack-llm-docs extra. Heavy document parsers (docling, unstructured)
-    # are opt-in via the serviette extras below.
-    "pathway[xpack-llm]>=0.31.2.dev899",
+    # >=0.32.1: the first release with the vector-store output connectors
+    # (duckdb, schema-driven qdrant, pinecone, ...) and lazy xpack imports.
+    # Heavy document parsers (docling, unstructured) are opt-in via the
+    # serviette extras below.
+    "pathway[xpack-llm]>=0.32.1",
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "httpx>=0.27",

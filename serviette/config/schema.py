@@ -245,9 +245,8 @@ class DuckDbConfig(_HybridCapableConfig):
     scan, not a Python loop.
 
     Concurrency: the sink writes with ``detach_between_batches`` (Pathway
-    0.31.2.dev series), releasing the single-writer file lock between
-    minibatches, so the
-    server's retrying read-only connections query the same file while a
+    ≥ 0.32.1), releasing the single-writer file lock between minibatches, so
+    the server's retrying read-only connections query the same file while a
     streaming indexer runs. On older Pathway builds serviette warns and falls
     back to hold-the-lock behavior (use ``mode: static`` there).
     """

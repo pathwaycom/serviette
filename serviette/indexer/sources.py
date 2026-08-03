@@ -9,11 +9,11 @@ parse UDF. Today that is:
   path in the metadata.
 - **gdrive** — ``pw.io.gdrive.read(format="only_metadata")``; bytes downloaded by
   file ``id`` via the Google Drive API.
-- **s3** — ``pw.io.s3.read(format="only_metadata")`` (Pathway develop,
-  the 0.31.2.dev series); bytes downloaded by object key via boto3. Covers any S3-compatible
+- **s3** — ``pw.io.s3.read(format="only_metadata")`` (Pathway ≥ 0.32.1);
+  bytes downloaded by object key via boto3. Covers any S3-compatible
   store (MinIO, DigitalOcean, Wasabi) through ``endpoint``/``with_path_style``.
 - **sharepoint** — ``pathway.xpacks.connectors.sharepoint.read(
-  format="only_metadata")`` (same Pathway change; Scale license); bytes
+  format="only_metadata")`` (same Pathway version; Scale license); bytes
   downloaded by server-relative path via the same certificate-authenticated
   ``office365`` client.
 

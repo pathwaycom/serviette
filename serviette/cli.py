@@ -14,28 +14,25 @@ import sys
 
 from serviette import APP_NAME, __version__
 
-_DEV_PATHWAY_HINT = (
-    "Your installed pathway ({version}) is a released build without the "
-    "vector-store connectors serviette needs (they have not shipped in a "
-    "release yet). Install the development build into this environment:\n\n"
-    "  uv pip install -U pathway --prerelease=allow \\\n"
-    "      --extra-index-url https://packages.pathway.com/966431ef6ba\n"
+_OLD_PATHWAY_HINT = (
+    "Your installed pathway ({version}) predates the vector-store connectors "
+    "serviette needs (pathway >= 0.32.1). Upgrade it in this environment:\n\n"
+    "  pip install -U 'pathway>=0.32.1'\n"
 )
 
 
-def _ensure_dev_pathway() -> None:
-    """Fail with instructions, not an AttributeError, on a released pathway.
+def _ensure_pathway_connectors() -> None:
+    """Fail with instructions, not an AttributeError, on an old pathway.
 
-    Engine-facing commands (indexer/up/demo) need connectors that exist only
-    in development builds; a plain `pip install pathway` from PyPI resolves
-    to a release without them, and the first symptom used to be an opaque
-    crash deep in the stack.
+    Engine-facing commands (indexer/up/demo) need the vector-store output
+    connectors that shipped in pathway 0.32.1; on an older install the first
+    symptom used to be an opaque crash deep in the stack.
     """
 
     import pathway as pw
 
     if not hasattr(pw.io, "duckdb"):
-        raise SystemExit(_DEV_PATHWAY_HINT.format(version=pw.__version__))
+        raise SystemExit(_OLD_PATHWAY_HINT.format(version=pw.__version__))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -55,7 +52,7 @@ def main(argv: list[str] | None = None) -> None:
     args, rest = parser.parse_known_args(argv)
 
     if args.command in ("indexer", "up", "demo"):
-        _ensure_dev_pathway()
+        _ensure_pathway_connectors()
     if args.command == "indexer":
         from serviette.indexer.main import main as indexer_main
 

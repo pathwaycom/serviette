@@ -207,7 +207,7 @@ def _prepare_weaviate(config: ServietteConfig) -> None:
 def _prepare_qdrant(config: ServietteConfig) -> None:
     """Create the Qdrant collection with a single named dense vector slot.
 
-    The schema-driven ``pw.io.qdrant`` sink (Pathway ≥ 0.31.2.dev) no longer
+    The schema-driven ``pw.io.qdrant`` sink (Pathway ≥ 0.32.1) no longer
     auto-creates the collection: it binds each declared vector slot to the
     same-named table column, so the collection must pre-exist with a dense slot
     named ``QDRANT_VECTOR_NAME`` (matching the indexer's ``embedding`` column
