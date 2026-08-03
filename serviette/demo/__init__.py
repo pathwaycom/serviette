@@ -55,6 +55,28 @@ _SCRIPT = """
 ────────────────────────────────────────────────────────────────────────
 """
 
+_MOCK_NOTICE = """
+ ⚠  MOCK EMBEDDER IN USE — retrieval quality is NOT representative.
+    Neither the local embedder is installed nor an API embedder chosen,
+    so matching works on token overlap only{key_hint}.
+    For a real demo, either:
+      pip install "serviette[local]"      # free local embeddings (~4.5 GB)
+      serviette demo --embedder openai    # nothing to install; indexing is
+                                          # billed to OPENAI_API_KEY
+"""
+
+
+def mock_embedder_notice() -> str:
+    """The banner block explaining *why* the demo fell back to mock."""
+
+    key_hint = (
+        "\n    (your OPENAI_API_KEY is set, but the demo never spends it on"
+        "\n    indexing unless you opt in with --embedder openai)"
+        if os.environ.get("OPENAI_API_KEY")
+        else ""
+    )
+    return _MOCK_NOTICE.format(key_hint=key_hint)
+
 
 def choose_embedder() -> str:
     """Pick the local embedder: sentence-transformers if installed, else mock.
@@ -222,4 +244,7 @@ def main(argv: list[str]) -> None:
         embedder_choice=args.embedder,
     )
     print(_SCRIPT.format(port=args.port, docs_dir=demo_dir / "docs"))
+    embedder_type = yaml.safe_load(config_path.read_text())["embedder"]["type"]
+    if embedder_type == "mock":
+        print(mock_embedder_notice())
     sys.exit(up_run(load_config(config_path), str(config_path)))

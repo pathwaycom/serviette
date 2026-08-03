@@ -39,6 +39,20 @@ def test_choose_embedder_stays_local_even_with_key(monkeypatch):
     assert choose_embedder() == "sentence_transformer"
 
 
+def test_mock_notice_names_both_remedies(monkeypatch):
+    from serviette.demo import mock_embedder_notice
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    notice = mock_embedder_notice()
+    assert "MOCK EMBEDDER" in notice
+    assert 'serviette[local]' in notice
+    assert "--embedder openai" in notice
+    assert "OPENAI_API_KEY is set" not in notice
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    assert "never spends it" in mock_embedder_notice()
+
+
 def test_demo_openai_embedder_opt_in(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
     config = build_demo_config(
