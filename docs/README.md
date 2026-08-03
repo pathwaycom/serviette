@@ -27,17 +27,18 @@ database, so you can scale them independently.
 serviette requires **Python ≥ 3.10** (the minimum supported by Pathway).
 
 ```bash
-pip install "serviette[openai]"
+pip install serviette
 ```
 
 (or, from a checkout, `pip install -e ".[dev,local]"` — see the README's
 [Development](../README.md#development) section for the full walkthrough).
+OpenAI support (the default `/rag` LLM and the OpenAI embedder) is built
+in — just set `OPENAI_API_KEY`.
 
-Optional extras: `openai` (OpenAI embedders / `/rag`), `local`
-(sentence-transformers), `docling` (layout-aware PDF + Office parsing),
-`ocr` (scanned images), `pyfilesystem` (FTP/SFTP/WebDAV/ZIP sources),
-`gdrive`, `sharepoint`, plus one extra per vector-DB client (`qdrant`,
-`pgvector`, …, or `all`).
+Optional extras: `local` (sentence-transformers — free local embeddings),
+`docling` (layout-aware PDF + Office parsing), `ocr` (scanned images),
+`pyfilesystem` (FTP/SFTP/WebDAV/ZIP sources), `gdrive`, `sharepoint`, plus
+one extra per vector-DB client (`qdrant`, `pgvector`, …, or `all`).
 
 ---
 

@@ -5,11 +5,14 @@ into a working directory, generates a DuckDB-backed config, and runs the
 ``serviette up`` supervisor over it. The printed script walks the presenter
 through the money shot: edit ``docs/pricing.md`` and watch the answer change.
 
-Embedder/LLM selection (no questions asked). The embedder is always local —
+Embedder/LLM selection. By default the embedder is local —
 ``sentence-transformers`` when installed, the mock embedder otherwise —
-so retrieval is free and the index never depends on an API key. The LLM
-uses ``OPENAI_API_KEY`` when it is set (real generated answers) and falls
-back to the mock LLM (the answer quotes the retrieved snippet) when not.
+so retrieval is free and the index never depends on an API key.
+``--embedder openai`` opts into OpenAI embeddings instead: nothing to
+install, fast to start, but every indexed token costs money — meant for
+small corpora. The LLM (independently of the embedder) uses
+``OPENAI_API_KEY`` when it is set (real generated answers) and falls back
+to the mock LLM (the answer quotes the retrieved snippet) when not.
 """
 
 from __future__ import annotations
@@ -87,11 +90,12 @@ def build_demo_config(
         },
         "server": {"host": "127.0.0.1", "port": port},
     }
-    config["embedder"] = (
-        {"type": "sentence_transformer"}
-        if embedder == "sentence_transformer"
-        else {"type": "mock"}
-    )
+    if embedder == "sentence_transformer":
+        config["embedder"] = {"type": "sentence_transformer"}
+    elif embedder == "openai":
+        config["embedder"] = {"type": "openai", "api_key": "${OPENAI_API_KEY}"}
+    else:
+        config["embedder"] = {"type": "mock"}
     # The LLM (not the embedder) upgrades to OpenAI when a key is present.
     if os.environ.get("OPENAI_API_KEY"):
         config["llm"] = {"type": "openai", "api_key": "${OPENAI_API_KEY}"}
@@ -133,36 +137,52 @@ def _reset_index_if_embedder_changed(demo_dir: Path, embedder: str) -> None:
         previous = yaml.safe_load(config_path.read_text())["embedder"]["type"]
     except Exception:  # noqa: BLE001 - a hand-edited config must not crash the demo
         return
-    current = embedder if embedder == "sentence_transformer" else "mock"
-    if previous == current:
+    if previous == embedder:
         return
     logger.info(
         "demo: embedder changed (%s -> %s); resetting the demo index",
         previous,
-        current,
+        embedder,
     )
     (demo_dir / "embeddings.duckdb").unlink(missing_ok=True)
     shutil.rmtree(demo_dir / "persistence", ignore_errors=True)
 
 
-def prepare_demo_dir(demo_dir: Path, *, port: int, license_key: str) -> Path:
+def prepare_demo_dir(
+    demo_dir: Path, *, port: int, license_key: str, embedder_choice: str = "local"
+) -> Path:
     """Copy the corpus and write config.yaml; returns the config path."""
 
     docs = demo_dir / "docs"
     if not docs.exists():
         shutil.copytree(_CORPUS_DIR, docs)
-    embedder = choose_embedder()
+    if embedder_choice == "openai":
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise SystemExit(
+                "serviette demo --embedder openai needs OPENAI_API_KEY set."
+            )
+        embedder = "openai"
+    else:
+        embedder = choose_embedder()
     _reset_index_if_embedder_changed(demo_dir, embedder)
     if embedder == "mock":
         logger.warning(
-            "Neither OPENAI_API_KEY nor sentence-transformers found: using the "
-            "mock embedder (retrieval quality is NOT representative). "
-            'Install "serviette[local]" or set OPENAI_API_KEY for a real demo.'
+            "sentence-transformers is not installed: using the mock embedder "
+            "(retrieval quality is NOT representative). For a real demo "
+            'install "serviette[local]" (free local embeddings) or run with '
+            "--embedder openai (uses your OPENAI_API_KEY; costs money)."
         )
     elif embedder == "sentence_transformer":
         logger.info(
             "Using local sentence-transformers embeddings; /rag will quote "
             "retrieved snippets (set OPENAI_API_KEY for generated answers)."
+        )
+    elif embedder == "openai":
+        logger.info(
+            "Using OpenAI embeddings for indexing: fast to start, but every "
+            "indexed token is billed — keep the corpus small. For large "
+            'collections install "serviette[local]" and use the default '
+            "local embedder."
         )
     config = build_demo_config(
         demo_dir, port=port, embedder=embedder, license_key=license_key
@@ -182,13 +202,24 @@ def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(prog="serviette demo", description=__doc__)
     parser.add_argument("--dir", default="./serviette-demo", help="Demo working directory")
     parser.add_argument("--port", type=int, default=8989)
+    parser.add_argument(
+        "--embedder",
+        choices=["local", "openai"],
+        default="local",
+        help="local (default): free sentence-transformers embeddings; "
+        "openai: nothing to install but indexing costs money (needs "
+        "OPENAI_API_KEY) — for small corpora",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     demo_dir = Path(args.dir).resolve()
     demo_dir.mkdir(parents=True, exist_ok=True)
     config_path = prepare_demo_dir(
-        demo_dir, port=args.port, license_key=_resolve_license_key()
+        demo_dir,
+        port=args.port,
+        license_key=_resolve_license_key(),
+        embedder_choice=args.embedder,
     )
     print(_SCRIPT.format(port=args.port, docs_dir=demo_dir / "docs"))
     sys.exit(up_run(load_config(config_path), str(config_path)))

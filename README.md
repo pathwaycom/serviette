@@ -15,14 +15,18 @@ seconds.
 <p align="center"><em>From zero to a live RAG stack in two commands — then edit a document and watch the answer change.</em></p>
 
 ```bash
-pip install "serviette[openai]"
+pip install serviette
+export OPENAI_API_KEY=sk-...   # powers generated answers; omit to run keyless (answers quote the retrieved snippets)
 
 serviette quickstart                       # interactive config wizard
 serviette up --config config.yaml          # indexer + server together → http://localhost:8989
 ```
 
-(Or run `serviette indexer` and `serviette server` separately — that is what `up`
-supervises, and how production deployments split them.)
+(Or start with `serviette demo` — a zero-setup playground on a bundled
+corpus: it copies everything into `./serviette-demo/docs`, and any files you
+drop there while it runs are answerable within seconds. Production
+deployments run `serviette indexer` and `serviette server` separately —
+that is what `up` supervises.)
 
 The server hosts both the web chat UI (on `/`) and the versioned REST API
 (under `/api/v1`) on one port:
@@ -215,8 +219,8 @@ modalities automatically when their key is present:
 | format | parsed by default with | notes |
 |---|---|---|
 | text / Markdown | as-is | |
-| PDF | Docling — layout-aware, tables (`serviette[docling]`; falls back to pypdf) | local, free |
-| Office (DOCX, PPTX, XLSX, HTML, EML, EPUB…) | Unstructured (`serviette[docling]`) | local, free |
+| PDF | pypdf — **built in**; `serviette[docling]` upgrades to Docling (layout-aware, tables) | local, free |
+| Office (DOCX, PPTX, XLSX, HTML, EML…) | Unstructured — **built in**; `serviette[docling]` widens coverage (EPUB, legacy formats) | local, free |
 | scanned images (PNG, JPG, TIFF…) | PaddleOCR | local, free |
 | audio (MP3, WAV…) | Whisper | when `OPENAI_API_KEY` is set |
 | video (MP4, WebM, MOV…) | TwelveLabs Pegasus — a searchable text description of the video | when `TWELVELABS_API_KEY` is set |
@@ -349,10 +353,23 @@ serviette demo                        # -> http://localhost:8989
 
 Notes:
 
-- `serviette demo` indexes with the **local** embedder (no keys, no API cost);
-  export `OPENAI_API_KEY` before running it if you want real generated
-  answers in `/rag` — the key upgrades only the answer composition, never
-  the index.
+- `serviette demo` materializes everything in a visible working directory:
+  `./serviette-demo/docs` holds the corpus — a **toy example**, a handful of
+  documents about a fictional company (Lumina Coffee Systems). Drop your own
+  files there (PDF, DOCX, scans, …) while it runs and they are answerable
+  within seconds.
+- The demo indexes with one of two embedders — pick your trade-off:
+  - **default, free & local** — needs `serviette[local]`, which pulls the
+    PyTorch stack (**~4.5 GB**): on a typical laptop connection the install
+    itself is the slow part, so the first run takes a while. Free at any
+    corpus size afterwards.
+  - **`--embedder openai`** — nothing to install, starts immediately, but
+    every indexed token is billed to your `OPENAI_API_KEY`. Fine for the toy
+    corpus and small folders; for a large collection, sit out the
+    `serviette[local]` install and use the free embedder instead.
+- Independently of the embedder, export `OPENAI_API_KEY` if you want real
+  generated answers in `/rag` — without it the demo answers by quoting the
+  retrieved snippets.
 
 Running the test suites:
 

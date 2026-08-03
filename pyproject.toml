@@ -33,10 +33,20 @@ dependencies = [
     "pyyaml>=6.0",
     # The default zero-setup vector backend (embedded, pure-wheel).
     "duckdb>=1.0",
+    # Explicit, not via pathway[xpack-llm]'s transitive pin: the OpenAI
+    # client powers the default /rag LLM and the OpenAI embedder (~6 MB).
+    "openai>=1.0",
+    # The popular formats must work in a bare `pip install serviette`:
+    # pypdf for PDF (tiny, pure-python; the docling extra upgrades it to
+    # layout-aware parsing), unstructured for the office family (DOCX, PPTX,
+    # XLSX, HTML, EML). Same version pathway's xpack-llm-docs extra pins, so
+    # adding serviette[docling] later never conflicts. Heavy stacks stay
+    # opt-in: docling (layout/tables), ocr (scans), API keys (audio/video).
+    "pypdf>=4.0",
+    "unstructured[docx,pptx,xlsx]~=0.18.1",
 ]
 
 [project.optional-dependencies]
-openai = ["openai>=1.0"]
 gdrive = ["google-api-python-client>=2.0", "google-auth>=2.0"]
 # S3 needs no extra: boto3 ships with pathway.
 sharepoint = ["Office365-REST-Python-Client>=2.5"]
@@ -62,7 +72,7 @@ mongodb = ["pymongo>=4.9"]
 local = ["sentence-transformers>=3.0"]
 gemini = ["google-generativeai>=0.8"]
 all = [
-    "serviette[openai,gdrive,pgvector,milvus,qdrant,chroma,weaviate,pinecone,mongodb]",
+    "serviette[gdrive,pgvector,milvus,qdrant,chroma,weaviate,pinecone,mongodb]",
 ]
 dev = [
     "pytest>=8.0",

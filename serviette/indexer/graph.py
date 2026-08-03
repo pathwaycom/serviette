@@ -123,8 +123,15 @@ class ParserRegistry:
             if modality == "text":
                 kind = ("utf8", {})
             elif modality == "pdf":
-                # Best keyless first: docling (layout + tables) over pypdf.
-                kind = ("docling", {}) if self._importable("docling") else ("pypdf", {})
+                # Best keyless first: docling (layout + tables) over pypdf (a
+                # core dependency, so PDFs parse in every install); the guard
+                # keeps even a broken environment skipping, never crashing.
+                if self._importable("docling"):
+                    kind = ("docling", {})
+                elif self._importable("pypdf"):
+                    kind = ("pypdf", {})
+                else:
+                    kind = ("skip", {"reason": "PDF: install serviette[docling] (or pypdf)"})
             elif modality == "image":
                 # PaddleOCR is local/keyless; vision parsers need an API key
                 # and are opt-in via explicit rules.
@@ -142,10 +149,35 @@ class ParserRegistry:
                     kind = ("twelvelabs_video", {})
                 else:
                     kind = ("skip", {"reason": "video: TWELVELABS_API_KEY not set"})
-            else:
+            elif self._importable("unstructured"):
                 kind = ("unstructured", {})
+            else:
+                kind = ("skip", {"reason": "office formats: install serviette[docling]"})
             self._defaults[modality] = kind
         return self._defaults[modality]
+
+    # Modules each parser kind needs at construction time, with the install
+    # hint for the error message. Used to fail fast on explicit ``parser:``
+    # rules — a config that names an uninstallable parser should stop the
+    # indexer at startup, not crash the pipeline on the first matching file.
+    _KIND_DEPS: ClassVar[dict[str, tuple[str, str]]] = {
+        "docling": ("docling", 'pip install "serviette[docling]"'),
+        "pypdf": ("pypdf", "pip install pypdf"),
+        "unstructured": ("unstructured", 'pip install "serviette[docling]"'),
+        "paddle_ocr": ("paddleocr", 'pip install "serviette[ocr]"'),
+    }
+
+    def check_rule_deps(self) -> None:
+        """Validate that every explicit rule's parser can actually be built."""
+
+        for rule in self._rules:
+            dep = self._KIND_DEPS.get(rule.type)
+            if dep and not self._importable(dep[0]):
+                module, hint = dep
+                raise ValueError(
+                    f"parser rule {rule.match} -> {rule.type!r} needs the "
+                    f"{module!r} package, which is not installed — {hint}"
+                )
 
     def resolved_rules(self) -> list[dict]:
         """Full routing picture (user rules + resolved defaults) for the
@@ -207,11 +239,31 @@ class ParserRegistry:
                 logger.warning("Skipping %r files — %s", suffix, reason)
             return ""
         options.pop("reason", None)
-        parser = self._get(kind, options)
-        result = parser.__wrapped__(contents)
-        if inspect.isawaitable(result):
-            # Some xpack parsers return a bare Awaitable rather than a Coroutine.
-            result = asyncio.run(result)  # type: ignore[arg-type]
+        try:
+            parser = self._get(kind, options)
+        except ImportError as exc:
+            # Routing guards make this unreachable for the defaults, and
+            # check_rule_deps() for explicit rules — this net catches lazy
+            # imports inside the xpack parsers themselves. One file must
+            # never kill the pipeline.
+            reason = f"parser {kind!r} unavailable: {exc}"
+            if reason not in self._warned:
+                self._warned.add(reason)
+                logger.warning("Skipping %r files — %s", suffix, reason)
+            return ""
+        try:
+            result = parser.__wrapped__(contents)
+            if inspect.isawaitable(result):
+                # Some xpack parsers return a bare Awaitable rather than a Coroutine.
+                result = asyncio.run(result)  # type: ignore[arg-type]
+        except Exception as exc:  # noqa: BLE001 - one bad file must never kill the pipeline
+            logger.warning(
+                "Failed to parse %r with the %r parser: %s — file skipped",
+                name or suffix,
+                kind,
+                exc,
+            )
+            return ""
         # result is list[(text, metadata)]; concatenate element texts — our own
         # splitter re-chunks downstream. str() because some parsers return
         # str-like objects (e.g. PaddleOCR's MarkdownResult), not plain str.
@@ -335,6 +387,7 @@ def build_graph(
     config.for_indexer()
 
     registry = ParserRegistry(config.parser)
+    registry.check_rule_deps()
     splitter = splitter if splitter is not None else build_xpack_splitter(config.splitter)
     embedder = embedder if embedder is not None else build_xpack_embedder(config.embedder)
 

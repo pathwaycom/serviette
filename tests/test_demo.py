@@ -39,6 +39,41 @@ def test_choose_embedder_stays_local_even_with_key(monkeypatch):
     assert choose_embedder() == "sentence_transformer"
 
 
+def test_demo_openai_embedder_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    config = build_demo_config(
+        tmp_path, port=8000, embedder="openai", license_key="K"
+    )
+    assert config["embedder"] == {"type": "openai", "api_key": "${OPENAI_API_KEY}"}
+    load_config_dict(config).for_indexer()
+
+
+def test_demo_openai_embedder_requires_key(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(SystemExit, match="OPENAI_API_KEY"):
+        prepare_demo_dir(
+            tmp_path, port=8000, license_key="K", embedder_choice="openai"
+        )
+
+
+def test_demo_embedder_switch_resets_index(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    prepare_demo_dir(tmp_path, port=1, license_key="K")  # local embedder
+    (tmp_path / "embeddings.duckdb").write_bytes(b"local vectors")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    cfg = prepare_demo_dir(
+        tmp_path, port=1, license_key="K", embedder_choice="openai"
+    )
+    import yaml
+
+    assert yaml.safe_load(cfg.read_text())["embedder"]["type"] == "openai"
+    # Vectors from different embedders are not comparable: index dropped.
+    assert not (tmp_path / "embeddings.duckdb").exists()
+
+
 def test_prepare_demo_dir_copies_corpus_and_writes_config(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     config_path = prepare_demo_dir(tmp_path, port=8000, license_key="KEY")

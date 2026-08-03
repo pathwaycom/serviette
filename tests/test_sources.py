@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from serviette.config.schema import (
@@ -234,7 +236,7 @@ def test_parser_defaults_prefer_best_keyless(monkeypatch):
     monkeypatch.delenv("TWELVELABS_API_KEY", raising=False)
 
     # Everything installed: docling wins for pdf, paddle for images.
-    reg = _registry(importable={"docling", "paddleocr"})
+    reg = _registry(importable={"docling", "paddleocr", "unstructured"})
     assert reg._route(".pdf", "a.pdf")[0] == "docling"
     assert reg._route(".png", "scan.png")[0] == "paddle_ocr"
     assert reg._route(".txt", "a.txt")[0] == "utf8"
@@ -243,10 +245,17 @@ def test_parser_defaults_prefer_best_keyless(monkeypatch):
     assert reg._route(".mp3", "a.mp3")[0] == "skip"
     assert reg._route(".mp4", "a.mp4")[0] == "skip"
 
-    # Nothing optional installed: pdf falls back to pypdf, images skip.
-    reg = _registry(importable=set())
+    # The docling extra absent: pdf falls back to pypdf (a core dependency).
+    reg = _registry(importable={"pypdf"})
     assert reg._route(".pdf", "a.pdf")[0] == "pypdf"
+
+    # Nothing importable at all: every route degrades to skip — a missing
+    # parser stack must never crash the pipeline (it used to: the pdf route
+    # returned "pypdf" without checking it was installed).
+    reg = _registry(importable=set())
+    assert reg._route(".pdf", "a.pdf")[0] == "skip"
     assert reg._route(".png", "scan.png")[0] == "skip"
+    assert reg._route(".docx", "a.docx")[0] == "skip"
 
 
 def test_parser_defaults_enable_keyed_modalities_with_keys(monkeypatch):
@@ -282,6 +291,29 @@ def test_parser_skip_produces_empty_text(monkeypatch, caplog):
     reg = _registry()
     assert reg.parse(b"\x00fakevideo", ".mp4", "demo.mp4") == ""
     assert any("Skipping" in r.message for r in caplog.records)
+
+
+def test_parser_rule_with_missing_dep_fails_at_startup():
+    from serviette.config.schema import ParserRule
+
+    reg = _registry([ParserRule(match=["*.pdf"], type="docling")], importable=set())
+    with pytest.raises(ValueError, match=r"serviette\[docling\]"):
+        reg.check_rule_deps()
+    # With the dependency present the same rule validates fine.
+    reg = _registry([ParserRule(match=["*.pdf"], type="docling")], importable={"docling"})
+    reg.check_rule_deps()
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("unstructured") is not None,
+    reason="needs an environment without the docling/unstructured stack",
+)
+def test_parser_missing_lazy_import_skips_instead_of_crashing(caplog):
+    # Force the route to a parser whose import will genuinely fail: the
+    # safety net must convert the ImportError into a warning + empty text.
+    reg = _registry(importable={"unstructured"})
+    assert reg.parse(b"PK\x03\x04fake-docx", ".docx", "a.docx") == ""
+    assert any("unavailable" in r.message for r in caplog.records)
 
 
 def test_parser_rules_in_fingerprint_without_credentials(monkeypatch):
