@@ -10,7 +10,7 @@ documents — an edit, a new file, a deletion — is reflected in answers within
 seconds.
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="serviette: CLI walkthrough then the web chat UI" width="100%">
+  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/demo.gif" alt="serviette: CLI walkthrough then the web chat UI" width="100%">
 </p>
 <p align="center"><em>From zero to a live RAG stack in two commands — then edit a document and watch the answer change.</em></p>
 
@@ -81,7 +81,7 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="serviette architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
+  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/architecture.svg" alt="serviette architecture: sources feed the Pathway indexer, which writes through Pathway's native connectors into one of 8 vector databases; the stateless server embeds queries, searches the database and serves the chat UI and the /api/v1 REST API" width="100%">
 </p>
 
 **The two halves are fully decoupled.** The indexer (write path) and the
@@ -109,7 +109,7 @@ talk to each other. Their only contract is the vector database itself:
 
 The one deliberate exception: the embedded DuckDB backend trades this
 distribution for zero setup — one local file, single-writer, ideal for
-laptops and demos (see [docs](docs/README.md) for its concurrency note).
+laptops and demos (see [docs](https://github.com/pathwaycom/serviette/blob/main/docs/README.md) for its concurrency note).
 
 ## Benchmarks
 
@@ -122,7 +122,7 @@ Self-contained benchmark (docker-compose: Qdrant + indexer + server, fully
 local embeddings, zero API cost) over a Wikipedia corpus of plain text —
 every byte below is extracted text (a PDF collection with the same text
 content would weigh several times more) —
-see [benchmarks/realtime-data-indexing](benchmarks/realtime-data-indexing):
+see [benchmarks/realtime-data-indexing](https://github.com/pathwaycom/serviette/tree/main/benchmarks/realtime-data-indexing):
 
 | corpus | ≈ pages | files | chunks | indexing time | peak memory (PSS) | in Qdrant |
 |---|---|---|---|---|---|---|
@@ -156,7 +156,7 @@ that remains is the file-watch index above, i.e. the corpus in fewer files
 would cost less. Indexing time scales linearly with bytes throughout.
 
 <p align="center">
-  <img src="docs/assets/bench-memory.png" alt="Left: indexer PSS over time for corpora from 100 MB to 50 GB; every curve plateaus between 7 and 16 GB. Right: connector-worker extra memory across six corpus sizes follows ~318 bytes per watched file" width="100%">
+  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/bench-memory.png" alt="Left: indexer PSS over time for corpora from 100 MB to 50 GB; every curve plateaus between 7 and 16 GB. Right: connector-worker extra memory across six corpus sizes follows ~318 bytes per watched file" width="100%">
 </p>
 
 The peak itself is dominated by the embedding stack, not the engine — a
@@ -165,7 +165,7 @@ embeddings locally (8 × PyTorch runtime + model), i.e. of paying no
 per-token API fees. Fewer workers or an API embedder shrink it accordingly.
 
 <p align="center">
-  <img src="docs/assets/bench-memory-breakdown.png" alt="Breakdown of the 8.8 GB peak on the 10 GB corpus: three quarters is the local PyTorch embedding stack across 8 workers; file-watch metadata is about 1.1 GB; supervisors and shared code make up the rest" width="85%">
+  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/bench-memory-breakdown.png" alt="Breakdown of the 8.8 GB peak on the 10 GB corpus: three quarters is the local PyTorch embedding stack across 8 workers; file-watch metadata is about 1.1 GB; supervisors and shared code make up the rest" width="85%">
 </p>
 
 Memory is measured as PSS (proportional set size) summed over the container:
@@ -184,8 +184,8 @@ Development section install), so they are reproducible as-is.
 End-to-end evaluation on [FRAMES](https://arxiv.org/abs/2409.12941)
 (Google, 2024): 824 multi-hop questions whose answers must be assembled
 from 2–15 English Wikipedia articles — see
-[benchmarks/frames](benchmarks/frames), full technical report in
-[REPORT.md](benchmarks/frames/REPORT.md):
+[benchmarks/frames](https://github.com/pathwaycom/serviette/tree/main/benchmarks/frames), full technical report in
+[REPORT.md](https://github.com/pathwaycom/serviette/blob/main/benchmarks/frames/REPORT.md):
 
 | measurement | result |
 |---|---|
@@ -208,7 +208,7 @@ the headline is the paired delta, not 73.7%. The grounded rows measure
 serviette as it ships for private corpora: answers strictly from retrieved
 documents, a deliberately stricter regime than the paper's. Methodology,
 statistics, limitations and raw per-question outputs:
-[REPORT.md](benchmarks/frames/REPORT.md).
+[REPORT.md](https://github.com/pathwaycom/serviette/blob/main/benchmarks/frames/REPORT.md).
 
 ## Multimodality
 
@@ -232,7 +232,7 @@ expensive parses (video) are cached on disk, so restarts cost nothing.
 
 The routing is configurable per file pattern (`parser:` section — pick a
 vision model for images instead of OCR, set a custom video prompt); see
-[docs](docs/README.md). Embeddings work the same for every modality: parsed
+[docs](https://github.com/pathwaycom/serviette/blob/main/docs/README.md). Embeddings work the same for every modality: parsed
 content is text, so any of the embedder families — including the local
 credential-free default — covers a multimodal corpus.
 
@@ -318,7 +318,7 @@ interleaves them with per-process prefixes.
 The server listens on **localhost only** by default and ships no built-in
 authentication — exposing it is an explicit decision: set `server.host:
 0.0.0.0` and put an authenticating reverse proxy in front (a five-line
-Caddy example lives in [docs](docs/README.md#security--exposing-the-server)).
+Caddy example lives in [docs](https://github.com/pathwaycom/serviette/blob/main/docs/README.md#security--exposing-the-server)).
 
 ## Requirements
 
@@ -327,7 +327,7 @@ Python ≥ 3.10 (the minimum supported by Pathway).
 ## Documentation
 
 Full installation, quickstart, configuration reference, persistence,
-architecture and scaling notes live in **[docs/README.md](docs/README.md)**.
+architecture and scaling notes live in **[docs/README.md](https://github.com/pathwaycom/serviette/blob/main/docs/README.md)**.
 
 ## Development
 
@@ -413,4 +413,4 @@ Each test skips automatically when Docker or its client library is missing.
 
 ## License
 
-See [LICENSE](LICENSE).
+See [LICENSE](https://github.com/pathwaycom/serviette/blob/main/LICENSE).

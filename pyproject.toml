@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "serviette"
-version = "0.1.0"
+version = "0.1.0.post1"
 description = "A universal, no-code RAG server for any vector database, built on the Pathway Live Data Framework."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -44,6 +44,11 @@ dependencies = [
     # opt-in: docling (layout/tables), ocr (scans), API keys (audio/video).
     "pypdf>=4.0",
     "unstructured[docx,pptx,xlsx]~=0.18.1",
+    # Resolver guard, not a real dependency of ours: unstructured requires
+    # an unpinned `numba`, and on py3.12 a clean resolve can backtrack to
+    # numba 0.53 whose llvmlite predates py3.10 and fails to build. 0.59 is
+    # the first numba with py3.12 wheels.
+    "numba>=0.59",
 ]
 
 [project.optional-dependencies]
@@ -89,7 +94,9 @@ dev = [
     # Fixture builders for the multimodal parser tests (tiny, pure-python).
     "fpdf2>=2.7",
     "python-docx>=1.1",
-    "pinecone[asyncio]>=5.0",
+    # asyncio support is built into pinecone since 9.x (the old [asyncio]
+    # extra is gone and only produces resolver warnings).
+    "pinecone>=9.0",
     "pymongo>=4.9",
     # Embedded Milvus engine for the Milvus integration test (the pgvector
     # integration test instead spins up a Docker container — see docs).
