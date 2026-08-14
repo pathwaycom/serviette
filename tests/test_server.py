@@ -73,6 +73,50 @@ def test_rag_disabled_without_llm(store_path, mock_server_embedder):
     assert resp.status_code == 501
 
 
+def test_litellm_routes_through_litellm_not_openai_client(store_path, mock_server_embedder):
+    """A litellm-typed llm section must call litellm.acompletion, not the OpenAI client.
+
+    Regression: build_llm mapped ``type: litellm`` onto ``OpenAIChat``, which
+    built ``AsyncOpenAI`` with no base_url and sent the OpenRouter key to
+    api.openai.com (401). The /rag call in the traceback came from exactly
+    this path.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from serviette.config.schema import LLMConfig
+    from serviette.server.llm import LiteLLMChat, build_llm
+
+    llm = build_llm(
+        LLMConfig(
+            type="litellm",
+            model="openrouter/moonshotai/kimi-k3",
+            api_key="sk-test-openrouter-key",
+        )
+    )
+    assert isinstance(llm, LiteLLMChat), "type: litellm must not build OpenAIChat"
+
+    captured: dict = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))]
+        )
+
+    with _client(store_path, mock_server_embedder, llm=llm) as client, patch(
+        "litellm.acompletion", new=AsyncMock(side_effect=fake_acompletion)
+    ):
+        resp = client.post("/api/v1/rag", json={"query": "tell me about cats", "k": 2})
+
+    assert resp.status_code == 200
+    # Provider prefix + key forwarded to litellm; no base_url (no OpenAI client).
+    assert captured["model"] == "openrouter/moonshotai/kimi-k3"
+    assert captured["api_key"] == "sk-test-openrouter-key"
+    assert "base_url" not in captured
+    assert resp.json()["answer"] == "answer"
+
+
 def test_legacy_unversioned_aliases_still_work(store_path, mock_server_embedder):
     """Pre-versioning routes are kept as deprecated aliases of /api/v1."""
 
