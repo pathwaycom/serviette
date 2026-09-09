@@ -93,24 +93,26 @@ class LLMReranker:
 
     def __init__(self, config, llm_config=None, *, chat=None) -> None:
         # The scorer is any AsyncLLM (only ``raw`` is used). Tests inject a
-        # fake via ``chat``; production lazily builds an OpenAIChat from the
-        # reranker section, falling back to the top-level llm section.
+        # fake via ``chat``; production lazily builds the configured backend
+        # (build_llm) from the reranker section, falling back to the
+        # top-level llm section.
         self._chat = chat
         self._config = config
         self._llm_config = llm_config
 
     def _ensure_chat(self):
         if self._chat is None:
-            from serviette.server.llm import OpenAIChat
-
             merged = dict(self._llm_config.model_dump() if self._llm_config else {})
             overrides = self._config.model_dump(exclude={"type", "candidates"})
             merged.update({k: v for k, v in overrides.items() if v is not None})
             merged.setdefault("type", "openai")
 
             from serviette.config.schema import LLMConfig
+            from serviette.server.llm import build_llm
 
-            self._chat = OpenAIChat(LLMConfig(**merged))
+            # build_llm, not OpenAIChat directly: a litellm-typed llm section
+            # must route through LiteLLM, not the plain OpenAI client.
+            self._chat = build_llm(LLMConfig(**merged))
         return self._chat
 
     async def rerank(
