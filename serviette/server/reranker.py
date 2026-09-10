@@ -35,11 +35,25 @@ class CrossEncoderReranker:
     _DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     is_local = True
 
+    # ``CrossEncoder.predict`` options; every other extra key is a
+    # constructor kwarg (``device``, ``max_length``, ``trust_remote_code``, ...).
+    _PREDICT_KEYS = frozenset({
+        "batch_size",
+        "show_progress_bar",
+        "num_workers",
+        "activation_fct",
+        "apply_softmax",
+        "convert_to_numpy",
+        "convert_to_tensor",
+    })
+
     def __init__(self, config) -> None:
         self._model_name = config.model or self._DEFAULT_MODEL
-        extra = config.model_dump(exclude={"type", "model", "candidates"})
-        self._model_kwargs = {k: v for k, v in extra.items() if v is not None}
+        extra = config.model_dump(exclude={"type", "model", "api_key", "candidates"})
+        extra = {k: v for k, v in extra.items() if v is not None}
+        self._model_kwargs = {k: v for k, v in extra.items() if k not in self._PREDICT_KEYS}
         self._model_kwargs.setdefault("device", "cpu")
+        self._predict_kwargs = {k: v for k, v in extra.items() if k in self._PREDICT_KEYS}
         self._model = None
 
     def _ensure_model(self):
@@ -58,7 +72,7 @@ class CrossEncoderReranker:
             return hits
         model = await asyncio.to_thread(self._ensure_model)
         scores = await asyncio.to_thread(
-            model.predict, [(query, hit["text"]) for hit in hits]
+            model.predict, [(query, hit["text"]) for hit in hits], **self._predict_kwargs
         )
         reranked = [
             {**hit, "score": float(score)}

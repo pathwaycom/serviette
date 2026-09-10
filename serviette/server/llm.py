@@ -81,6 +81,26 @@ class MockLLM:
 
 
 class OpenAIChat:
+    """LLM backend on the OpenAI SDK (``type: openai``).
+
+    Extra keys of the ``llm`` section are split the way the SDK expects them:
+    the few client-level ones (``base_url``, ``organization``, ...) go to
+    ``AsyncOpenAI``, everything else (``max_tokens``, ``top_p``, ``seed``,
+    ``response_format``, ...) is a ``chat.completions.create`` parameter —
+    the same per-call treatment ``LiteLLMChat`` gives them, so one section
+    behaves identically under both types.
+    """
+
+    _CLIENT_KEYS = frozenset({
+        "base_url",
+        "organization",
+        "project",
+        "timeout",
+        "max_retries",
+        "default_headers",
+        "default_query",
+    })
+
     def __init__(self, config) -> None:
         self._model = config.model or "gpt-4o-mini"
         self._api_key = config.api_key
@@ -97,11 +117,13 @@ class OpenAIChat:
                 "reasoning_effort",
             }
         )
-        self._client_kwargs = {k: v for k, v in extra.items() if v is not None}
+        extra = {k: v for k, v in extra.items() if v is not None}
+        self._client_kwargs = {k: v for k, v in extra.items() if k in self._CLIENT_KEYS}
+        self._call_kwargs = {k: v for k, v in extra.items() if k not in self._CLIENT_KEYS}
         self._client = None
 
     def _request_kwargs(self) -> dict:
-        kwargs: dict = {}
+        kwargs: dict = dict(self._call_kwargs)
         if self._temperature is not None:
             kwargs["temperature"] = self._temperature
         if self._reasoning_effort is not None:

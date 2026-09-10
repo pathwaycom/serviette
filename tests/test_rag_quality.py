@@ -375,3 +375,53 @@ def test_hybrid_index_rebuilds_when_rows_change(tmp_path, mock_server_embedder):
         )
         texts = [r["text"] for r in second.json()["results"]]
         assert any("zanzibar" in t for t in texts)
+
+
+async def test_cross_encoder_splits_constructor_and_predict_kwargs(monkeypatch):
+    """Extra ``reranker`` keys go where sentence-transformers expects them:
+    ``device``/``max_length`` to ``CrossEncoder(...)``, ``batch_size`` and the
+    other ``predict`` options to each call. Sending everything to the
+    constructor (the previous behaviour) raised TypeError on the first
+    reranked query for any predict-side key."""
+    import sys
+    import types
+
+    from serviette.server.reranker import build_reranker
+
+    created: dict = {}
+    predicted: dict = {}
+
+    class FakeCrossEncoder:
+        def __init__(self, name, **kwargs):
+            created["name"] = name
+            created.update(kwargs)
+
+        def predict(self, pairs, **kwargs):
+            predicted["pairs"] = pairs
+            predicted.update(kwargs)
+            return [0.1 * i for i in range(len(pairs))]
+
+    fake = types.ModuleType("sentence_transformers")
+    fake.CrossEncoder = FakeCrossEncoder
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake)
+
+    reranker = build_reranker(
+        RerankerConfig(
+            type="cross_encoder",
+            model="cross-encoder/ms-marco-MiniLM-L-12-v2",
+            device="cuda",
+            max_length=512,
+            batch_size=16,
+            show_progress_bar=False,
+        )
+    )
+    hits = [{"text": "a", "score": 0.0}, {"text": "b", "score": 0.0}]
+    out = await reranker.rerank("q", hits, k=1)
+
+    assert out == [{"text": "b", "score": pytest.approx(0.1)}]
+    assert created == {
+        "name": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+        "device": "cuda",
+        "max_length": 512,
+    }
+    assert predicted == {"pairs": [("q", "a"), ("q", "b")], "batch_size": 16, "show_progress_bar": False}

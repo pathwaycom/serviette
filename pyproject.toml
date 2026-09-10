@@ -71,7 +71,10 @@ milvus = ["pymilvus>=2.4"]
 qdrant = ["qdrant-client>=1.10"]
 chroma = ["chromadb-client>=0.5"]
 weaviate = ["weaviate-client>=4.7"]
-pinecone = ["pinecone>=5.0"]
+# <10: pinecone 10 rewrites create_index(dimension=...) into the new
+# schema-based request body, which pinecone-local (and our prepare step) do
+# not speak yet.
+pinecone = ["pinecone>=5.0,<10"]
 mongodb = ["pymongo>=4.9"]
 # Local, credential-free embeddings (indexer and server side).
 local = ["sentence-transformers>=3.0"]
@@ -96,7 +99,7 @@ dev = [
     "python-docx>=1.1",
     # asyncio support is built into pinecone since 9.x (the old [asyncio]
     # extra is gone and only produces resolver warnings).
-    "pinecone>=9.0",
+    "pinecone>=9.0,<10",
     "pymongo>=4.9",
     # Embedded Milvus engine for the Milvus integration test (the pgvector
     # integration test instead spins up a Docker container — see docs).

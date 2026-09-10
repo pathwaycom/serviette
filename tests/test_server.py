@@ -117,6 +117,157 @@ def test_litellm_routes_through_litellm_not_openai_client(store_path, mock_serve
     assert resp.json()["answer"] == "answer"
 
 
+async def test_openai_llm_splits_client_and_per_call_kwargs(monkeypatch):
+    """Extra ``llm`` keys must go where the OpenAI SDK expects them.
+
+    ``base_url`` is a client kwarg; ``max_tokens``/``top_p``/``seed`` are
+    ``chat.completions.create`` parameters. Sending everything to
+    ``AsyncOpenAI.__init__`` (the previous behaviour) raised TypeError on
+    the first /rag request for any per-request key.
+    """
+    from types import SimpleNamespace
+
+    import openai
+
+    from serviette.config.schema import LLMConfig
+    from serviette.server.llm import build_llm
+
+    created: dict = {}
+    calls: list[dict] = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))]
+            )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            created.update(kwargs)
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", FakeClient)
+
+    llm = build_llm(
+        LLMConfig(
+            type="openai",
+            model="gpt-4o-mini",
+            api_key="sk-test",
+            base_url="http://localhost:11434/v1",
+            temperature=0.0,
+            max_tokens=64,
+            top_p=0.9,
+            seed=7,
+        )
+    )
+    assert await llm.complete("q", ["ctx"]) == "answer"
+    assert await llm.raw("p") == "answer"
+
+    assert created == {"api_key": "sk-test", "base_url": "http://localhost:11434/v1"}
+    for call in calls:
+        assert call["model"] == "gpt-4o-mini"
+        assert call["temperature"] == 0.0
+        assert call["max_tokens"] == 64
+        assert call["top_p"] == 0.9
+        assert call["seed"] == 7
+        assert "base_url" not in call
+
+
+async def test_litellm_llm_forwards_the_same_keys_per_call(monkeypatch):
+    """The same ``llm`` section must behave identically under ``type: litellm``."""
+    from types import SimpleNamespace
+
+    import litellm
+
+    from serviette.config.schema import LLMConfig
+    from serviette.server.llm import build_llm
+
+    calls: list[dict] = []
+
+    async def fake_acompletion(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))]
+        )
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    llm = build_llm(
+        LLMConfig(
+            type="litellm",
+            model="openai/gpt-4o-mini",
+            api_key="sk-test",
+            api_base="http://localhost:11434/v1",
+            temperature=0.0,
+            max_tokens=64,
+        )
+    )
+    assert await llm.complete("q", ["ctx"]) == "answer"
+    call = calls[0]
+    assert call["model"] == "openai/gpt-4o-mini"
+    assert call["api_key"] == "sk-test"
+    assert call["api_base"] == "http://localhost:11434/v1"
+    assert call["temperature"] == 0.0
+    assert call["max_tokens"] == 64
+
+
+def test_litellm_embedder_routes_through_litellm_not_openai_client(store_path):
+    """A litellm-typed embedder section must call litellm.aembedding, not the OpenAI client.
+
+    Same misrouting as the LLM one above (issue #2): ``build_embedder`` mapped
+    ``type: litellm`` onto ``OpenAIAsyncEmbedder``, whose ``AsyncOpenAI`` has no
+    base_url and sends the provider's key to api.openai.com. The indexer side
+    already uses pathway's ``LiteLLMEmbedder`` for this type, so the server must
+    hit the same provider or query and document vectors come from different
+    models.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from serviette.server.embedder import LiteLLMAsyncEmbedder, build_embedder
+
+    embedder = build_embedder(
+        EmbedderConfig(
+            type="litellm",
+            model="openrouter/qwen/qwen3-embedding-8b",
+            api_key="sk-test-openrouter-key",
+        )
+    )
+    assert isinstance(embedder, LiteLLMAsyncEmbedder), "type: litellm must not build OpenAIAsyncEmbedder"
+
+    captured: dict = {}
+
+    async def fake_aembedding(**kwargs):
+        captured.update(kwargs)
+        # Echo the store's vector for the query text so the top hit is deterministic.
+        return SimpleNamespace(data=[{"embedding": fake_embedding(kwargs["input"][0])}])
+
+    with _client(store_path, embedder) as client, patch(
+        "litellm.aembedding", new=AsyncMock(side_effect=fake_aembedding)
+    ):
+        resp = client.post("/api/v1/retrieve", json={"query": DOCS[0], "k": 1})
+
+    assert resp.status_code == 200
+    assert resp.json()["results"][0]["text"] == DOCS[0]
+    # Provider prefix + key forwarded to litellm; no OpenAI client involved.
+    assert captured["model"] == "openrouter/qwen/qwen3-embedding-8b"
+    assert captured["api_key"] == "sk-test-openrouter-key"
+    assert captured["input"] == [DOCS[0]]
+    assert "base_url" not in captured
+
+
+def test_litellm_embedder_requires_model():
+    """LiteLLM has no default embedding model: fail at build time, not on the first query."""
+    from serviette.server.embedder import build_embedder
+
+    with pytest.raises(ValueError, match="model"):
+        build_embedder(EmbedderConfig(type="litellm", api_key="sk-test"))
+
+
 def test_legacy_unversioned_aliases_still_work(store_path, mock_server_embedder):
     """Pre-versioning routes are kept as deprecated aliases of /api/v1."""
 

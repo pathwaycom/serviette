@@ -311,8 +311,23 @@ def build_xpack_embedder(cfg) -> pw.UDF:
         common["model"] = cfg.model
 
     if cfg.type == "openai":
+        if "base_url" in common:
+            # The xpack forwards extra keys to ``embeddings.create`` (where
+            # ``base_url`` is not a parameter) and builds its client without
+            # one, so this would fail on the first chunk.
+            raise ValueError(
+                "embedder type 'openai' does not accept 'base_url' on the indexer. "
+                "For an OpenAI-compatible endpoint set the OPENAI_BASE_URL environment "
+                "variable for both the indexer and the server, or use "
+                "'type: litellm' with 'model: openai/<model>' and 'api_base: <url>'."
+            )
         return embedders.OpenAIEmbedder(api_key=cfg.api_key, **common)
     if cfg.type == "litellm":
+        if not cfg.model:
+            raise ValueError(
+                "embedder type 'litellm' requires a 'model' with a provider prefix, "
+                "e.g. 'openrouter/qwen/qwen3-embedding-8b' (LiteLLM has no default)."
+            )
         return embedders.LiteLLMEmbedder(api_key=cfg.api_key, **common)
     if cfg.type in {"sentence_transformer", "sentencetransformer"}:
         model = common.pop("model", None) or "sentence-transformers/all-MiniLM-L6-v2"
@@ -330,6 +345,11 @@ def build_xpack_embedder(cfg) -> pw.UDF:
     if cfg.type == "gemini":
         return embedders.GeminiEmbedder(api_key=cfg.api_key, **common)
     if cfg.type == "bedrock":
+        # The xpack spells the model ``model_id``; the schema's ``model`` must
+        # not fall through into its ignored kwargs (the server reads ``model``).
+        model = common.pop("model", None)
+        if model is not None:
+            common.setdefault("model_id", model)
         return embedders.BedrockEmbedder(**common)
     raise ValueError(f"Unsupported embedder type: {cfg.type!r}")
 
@@ -355,14 +375,27 @@ def build_xpack_splitter(cfg):
                 chunks.pop()
             return chunks
 
+    # Extra keys are forwarded to the xpack splitter constructor verbatim
+    # (``min_tokens``/``encoding_name`` for token_count, ``separators``/
+    # ``model_name``/... for recursive). An unknown key fails here, at
+    # startup, instead of being silently ignored — the fingerprint stores the
+    # section, so a no-op key would still prompt for a re-index when changed.
+    extra = {
+        k: v
+        for k, v in cfg.model_dump(exclude={"type", "chunk_size", "chunk_overlap"}).items()
+        if v is not None
+    }
     if cfg.type in {"token_count", "tokencount"}:
         # TokenCountSplitter is token-based; map chunk_size -> max_tokens.
-        return TailMergingTokenCountSplitter(max_tokens=cfg.chunk_size)
+        # ``chunk_overlap`` does not apply (documented: used by recursive).
+        return TailMergingTokenCountSplitter(max_tokens=cfg.chunk_size, **extra)
     if cfg.type in {"recursive", "recursive_character"}:
         return splitters.RecursiveSplitter(
-            chunk_size=cfg.chunk_size, chunk_overlap=cfg.chunk_overlap
+            chunk_size=cfg.chunk_size, chunk_overlap=cfg.chunk_overlap, **extra
         )
     if cfg.type in {"null", "none"}:
+        if extra:
+            raise TypeError(f"splitter type 'null' takes no options, got: {sorted(extra)}")
         return splitters.NullSplitter()
     raise ValueError(f"Unsupported splitter type: {cfg.type!r}")
 

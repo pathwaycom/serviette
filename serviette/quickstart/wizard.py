@@ -592,7 +592,16 @@ class Wizard:
         env_ref = _ENV_REF.get(answers["embedder_type"])
         if env_ref is not None:
             self._section("Embedder model + API key")
-            answers["embedder_model"] = self.p.text("Embedder model (blank for default)", default="") or None
+            if answers["embedder_type"] == "litellm":
+                # LiteLLM has no default model; the provider prefix is what
+                # routes the call, so a blank answer would fail on both sides.
+                answers["embedder_model"] = self.p.text(
+                    "Embedder model (provider/model, e.g. openrouter/qwen/qwen3-embedding-8b)",
+                    default="",
+                    required=True,
+                )
+            else:
+                answers["embedder_model"] = self.p.text("Embedder model (blank for default)", default="") or None
             answers["embedder_api_key"] = self.p.text("API key", default=env_ref)
 
         # Splitter and persistence are not asked about: defaults are emitted

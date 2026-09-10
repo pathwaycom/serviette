@@ -12,7 +12,10 @@ To catch that, the indexer stores the full risk-relevant objects (not just a
 hash) in ``<persistence dir>/serviette-fingerprint.json``:
 
 - the splitter config,
-- the embedder identity (type / model / truncate_dim — never credentials),
+- the embedder identity: type, model, ``document_prefix`` and every extra
+  key that shapes the vectors (``dimensions``, ``truncate_dim``,
+  ``output_dimensionality``, ``api_base``, ...) — never credentials, and
+  not the throughput knobs (batch size, capacity, retries),
 - versions of the libraries whose behavior shapes the outputs
   (pathway, tiktoken, langchain_text_splitters).
 
@@ -82,19 +85,54 @@ def _library_version(module: str) -> str | None:
         return None
 
 
+# Embedder keys that never belong in the fingerprint: credentials (must not
+# be written to disk), the server-side query prefix (does not shape stored
+# vectors) and throughput knobs (tuning them must not prompt a re-index).
+_EMBEDDER_EXCLUDED_KEYS = frozenset({
+    "api_key",
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "default_headers",
+    "headers",
+    "query_prefix",
+    "batch_size",
+    "capacity",
+    "retries",
+})
+
+
+def _embedder_identity(config: ServietteConfig) -> dict[str, Any]:
+    """Everything in the embedder section that shapes the produced vectors.
+
+    Beyond ``type``/``model`` this is the open set of provider options that
+    change the output — ``dimensions`` (OpenAI, Bedrock Titan),
+    ``truncate_dim`` (sentence-transformers), ``output_dimensionality``
+    (Gemini), ``document_prefix`` (e5/bge), ``api_base`` (a different model
+    behind the same name) — so the section is taken wholesale minus the
+    exclusions above, rather than by allow-list that would miss the next key.
+    """
+    if not config.embedder:
+        return {}
+    dumped = config.embedder.model_dump()
+    identity = {
+        k: v
+        for k, v in dumped.items()
+        if k not in _EMBEDDER_EXCLUDED_KEYS and v is not None and v != ""
+    }
+    # Always present, even when unset, so old and new fingerprints line up.
+    identity.setdefault("type", dumped.get("type"))
+    identity.setdefault("model", dumped.get("model"))
+    return identity
+
+
 def build_fingerprint(config: ServietteConfig) -> dict[str, Any]:
-    embedder = config.embedder.model_dump() if config.embedder else {}
     from serviette.indexer.graph import ParserRegistry
 
     return {
         "splitter": config.splitter.model_dump(),
         "parser": ParserRegistry(config.parser).resolved_rules(),
-        "embedder": {
-            # Identity only — never credentials.
-            "type": embedder.get("type"),
-            "model": embedder.get("model"),
-            "truncate_dim": embedder.get("truncate_dim"),
-        },
+        "embedder": _embedder_identity(config),
         "libraries": {
             name: _library_version(name)
             for name in ("pathway", "tiktoken", "langchain_text_splitters")

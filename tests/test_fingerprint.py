@@ -71,3 +71,56 @@ def test_embedder_change_is_flagged(tmp_path, monkeypatch):
 def test_disabled_persistence_skips_check(tmp_path):
     check_fingerprint(_config(tmp_path, enabled=False))
     assert not (tmp_path / "persist" / _FILENAME).exists()
+
+
+def _config_with_embedder(tmp_path, **embedder):
+    return load_config_dict(
+        {
+            "sources": [{"type": "fs", "path": "/data"}],
+            "vector_db": {"type": "duckdb", "path": str(tmp_path / "x.duckdb")},
+            "embedder": {"type": "openai", "api_key": "sk-SECRET", **embedder},
+            "persistence": {"enabled": True, "path": str(tmp_path / "persist")},
+        }
+    )
+
+
+def test_fingerprint_tracks_vector_shaping_keys_but_not_secrets_or_throughput(tmp_path):
+    """Every embedder key that changes the produced vectors is part of the
+    identity: ``dimensions`` (openai/bedrock), ``output_dimensionality``
+    (gemini), ``document_prefix`` (e5/bge), ``api_base`` (a different model
+    behind the same name). Credentials and throughput knobs are not — tuning
+    ``batch_size`` must not trigger a re-index prompt."""
+    fp = build_fingerprint(
+        _config_with_embedder(
+            tmp_path,
+            model="text-embedding-3-large",
+            dimensions=256,
+            output_dimensionality=128,
+            document_prefix="passage: ",
+            query_prefix="query: ",
+            api_base="http://localhost:11434/v1",
+            aws_secret_access_key="AWS-SECRET",
+            aws_access_key_id="AKIA-SECRET",
+            aws_session_token="TOKEN-SECRET",
+            batch_size=64,
+            capacity=8,
+            retries=3,
+        )
+    )
+    emb = fp["embedder"]
+    assert emb["dimensions"] == 256
+    assert emb["output_dimensionality"] == 128
+    assert emb["document_prefix"] == "passage: "
+    assert emb["api_base"] == "http://localhost:11434/v1"
+    for key in ("query_prefix", "batch_size", "capacity", "retries"):
+        assert key not in emb
+    dumped = json.dumps(fp)
+    for secret in ("sk-SECRET", "AWS-SECRET", "AKIA-SECRET", "TOKEN-SECRET"):
+        assert secret not in dumped
+
+
+def test_dimensions_change_is_flagged(tmp_path, monkeypatch):
+    monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", raising=False)
+    check_fingerprint(_config_with_embedder(tmp_path, dimensions=256))
+    with pytest.raises(SystemExit, match="Refusing to start"):
+        check_fingerprint(_config_with_embedder(tmp_path, dimensions=512))
