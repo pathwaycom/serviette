@@ -15,8 +15,9 @@ seconds.
 <p align="center"><em>From zero to a live RAG stack in two commands — then edit a document and watch the answer change.</em></p>
 
 ```bash
-pip install serviette
-export OPENAI_API_KEY=sk-...   # powers generated answers; omit to run keyless (answers quote the retrieved snippets)
+pip install "serviette[local]"   # [local] = free local embeddings, the wizard's default (~4.5 GB PyTorch stack);
+                                 # plain `pip install serviette` if you will embed with OpenAI instead
+export OPENAI_API_KEY=sk-...     # powers generated answers; omit to run keyless (answers quote the retrieved snippets)
 
 serviette quickstart                       # interactive config wizard
 serviette up --config config.yaml          # indexer + server together → http://localhost:8989

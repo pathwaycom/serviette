@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 
-from serviette.config.schema import ServietteConfig
+from serviette.config.schema import ServietteConfig, require_source_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +184,10 @@ def run(config: ServietteConfig, config_path: str) -> int:
 
     config.for_indexer()
     config.for_server()
+    # Fail fast on a mistyped source folder: otherwise the indexer watches
+    # nothing, the "empty folder" path below starts the server, and the user
+    # only sees "no relevant context" answers.
+    require_source_dirs(config)
     _warn_duckdb_streaming(config)
 
     indexer = _spawn("indexer", config_path)

@@ -17,6 +17,7 @@ the I/O so it can be unit-tested without a terminal.
 
 from __future__ import annotations
 
+import os
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -409,7 +410,18 @@ class Wizard:
 
     def _collect_source(self, stype: str) -> dict[str, Any]:
         if stype == "fs":
-            path = self.p.text("Directory path", required=True)
+            while True:
+                path = os.path.expanduser(self.p.text("Directory path", required=True))
+                if Path(path).is_dir():
+                    break
+                # The indexer refuses to start on a missing folder; catch the
+                # typo here, while the user is still at the keyboard.
+                self.p.info(f"  Directory {path!r} does not exist.")
+                if self.p.confirm(
+                    "Use it anyway? (it must exist before you run the indexer)",
+                    default=False,
+                ):
+                    break
             # glob is an advanced setting: default emitted into the YAML,
             # edit it there.
             return {"type": "fs", "path": path, "glob": "**/*"}

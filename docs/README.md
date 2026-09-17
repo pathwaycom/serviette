@@ -27,16 +27,19 @@ database, so you can scale them independently.
 serviette requires **Python ≥ 3.10** (the minimum supported by Pathway).
 
 ```bash
-pip install serviette
+pip install "serviette[local]"
 ```
 
-(or, from a checkout, `pip install -e ".[dev,local]"` — see the README's
-[Development](../README.md#development) section for the full walkthrough).
+The `local` extra brings sentence-transformers — the free, credential-free
+embedder that `serviette quickstart` selects by default. It pulls the
+PyTorch stack (~4.5 GB); if you intend to embed with OpenAI instead, a
+plain `pip install serviette` is enough (pick `openai` in the wizard).
+From a checkout, `pip install -e ".[dev,local]"` — see the README's
+[Development](../README.md#development) section for the full walkthrough.
 OpenAI support (the default `/rag` LLM and the OpenAI embedder) is built
 in — just set `OPENAI_API_KEY`.
 
-Optional extras: `local` (sentence-transformers — free local embeddings),
-`docling` (layout-aware PDF + Office parsing), `ocr` (scanned images),
+Optional extras: `docling` (layout-aware PDF + Office parsing), `ocr` (scanned images),
 `pyfilesystem` (FTP/SFTP/WebDAV/ZIP sources), `gdrive`, `sharepoint`, plus
 one extra per vector-DB client (`qdrant`, `pgvector`, …, or `all`).
 
@@ -141,7 +144,7 @@ hardcoded.
 | `sources[].type` | `fs`\|`gdrive`\|`s3`\|`sharepoint`\|`pyfilesystem` | `fs` | indexer | Source type — see [Sources](#sources) below. |
 | `sources[].mode` | `streaming`\|`static` | `streaming` | indexer | `streaming` watches continuously; `static` indexes once and exits. |
 | `sources[].max_backlog_size` | int\|null | `1000` | indexer | **Advanced.** Backpressure bound on in-flight entries per connector (fs/gdrive/s3). Keeps memory flat during bulk backfills; the default suits virtually everyone — not offered by the wizard, edit the YAML to change. `null` disables. |
-| **fs** `sources[].path` | str | — (required) | indexer | Directory to watch. |
+| **fs** `sources[].path` | str | — (required) | indexer | Directory to watch (`~` is expanded). Must exist when the indexer starts — a missing folder is an error, not an empty index. |
 | **fs** `sources[].glob` | str | `**/*` | indexer | Glob of files to include. |
 | **gdrive** `sources[].object_id` | str | — (required) | indexer | Drive folder or file id (folders scanned recursively). |
 | **gdrive** `sources[].service_user_credentials_file` | str | — (required) | indexer | Path to a Google service-account JSON credentials file. |

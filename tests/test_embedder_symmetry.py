@@ -312,7 +312,7 @@ def test_wizard_requires_model_for_litellm(tmp_path, monkeypatch):
     tokens = iter(
         [
             "2",  # config type: indexer only
-            "1", "/data/a",  # one filesystem source
+            "1", str(tmp_path),  # one filesystem source (must exist)
             "6",  # done
             "1",  # vector db: duckdb
             "3",  # embedder: litellm

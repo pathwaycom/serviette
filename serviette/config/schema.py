@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from serviette import APP_NAME
 
@@ -37,6 +44,9 @@ class FsSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["fs"] = "fs"
+    # A directory; ``~`` is expanded. Must exist when the indexer starts —
+    # see :func:`require_source_dirs` (a typo must not silently become an
+    # empty index).
     path: str
     glob: str = "**/*"
     # "streaming" watches the path continuously (default); "static" reads the
@@ -48,6 +58,12 @@ class FsSource(BaseModel):
     # during bulk backfills and makes sink commits arrive steadily instead of
     # in one giant batch. None disables the bound.
     max_backlog_size: int | None = 1000
+
+    @field_validator("path")
+    @classmethod
+    def _expand_user(cls, value: str) -> str:
+        # ``~/docs`` is what people type; the fs connector takes it literally.
+        return os.path.expanduser(value)
 
 
 class GDriveSource(BaseModel):
@@ -669,6 +685,38 @@ class ServietteConfig(BaseModel):
     def for_frontend(self) -> ServietteConfig:
         self.require("frontend")
         return self
+
+    def missing_source_dirs(self) -> list[str]:
+        """Paths of ``fs`` sources that are not existing directories."""
+
+        return [
+            src.path
+            for src in self.sources
+            if src.type == "fs" and not Path(src.path).is_dir()
+        ]
+
+
+def require_source_dirs(config: ServietteConfig) -> None:
+    """Abort with a plain message when an ``fs`` source directory is missing.
+
+    Called by the engine-facing commands (``indexer``, ``up``) before any
+    work starts. Without this, a mistyped path is indistinguishable from an
+    empty folder: the connector watches nothing, ``up`` serves an empty
+    index, and the user only sees "no relevant context" answers.
+    """
+
+    missing = config.missing_source_dirs()
+    if not missing:
+        return
+    listed = "\n".join(f"  - {path}" for path in missing)
+    raise SystemExit(
+        "Source directory not found:\n"
+        f"{listed}\n"
+        "Check the 'path' of the fs source(s) in your config (relative paths "
+        "resolve against the current working directory; '~' is expanded), "
+        "or create the directory first — documents dropped into an existing "
+        "folder are indexed live."
+    )
 
 
 # ---------------------------------------------------------------------------

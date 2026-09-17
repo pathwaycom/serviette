@@ -24,6 +24,45 @@ from serviette.indexer.sources import (
 # -- schema ------------------------------------------------------------------
 
 
+def test_fs_source_expands_tilde(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert FsSource(path="~/docs").path == str(tmp_path / "docs")
+
+
+def test_require_source_dirs_rejects_missing_folder(tmp_path):
+    """A mistyped fs path must abort with a plain message, never become an
+    empty index (the connector watches a missing folder without complaint)."""
+
+    from serviette.config.schema import require_source_dirs
+
+    def cfg(*paths):
+        return ServietteConfig.model_validate(
+            {
+                "sources": [{"type": "fs", "path": str(p)} for p in paths]
+                + [{"type": "s3", "bucket": "b"}],
+                "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+                "embedder": {"type": "mock"},
+            }
+        )
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    require_source_dirs(cfg(docs))  # existing folder: fine (remote sources ignored)
+
+    missing = tmp_path / "typo"
+    assert cfg(docs, missing).missing_source_dirs() == [str(missing)]
+    with pytest.raises(SystemExit) as exc:
+        require_source_dirs(cfg(docs, missing))
+    message = str(exc.value)
+    assert str(missing) in message
+    assert str(docs) not in message
+    assert "not found" in message
+
+    (tmp_path / "file.txt").write_text("x")
+    with pytest.raises(SystemExit):  # a file is not a directory either
+        require_source_dirs(cfg(tmp_path / "file.txt"))
+
+
 def test_gdrive_source_validates():
     src = GDriveSource(
         object_id="abc123",

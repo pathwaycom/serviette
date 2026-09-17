@@ -125,6 +125,24 @@ def test_index_ready_probe_duckdb(tmp_path):
     assert _index_ready(config)  # first real content -> server may start
 
 
+def test_up_refuses_missing_source_dir(tmp_path):
+    """`serviette up` must not start the children on a mistyped folder."""
+
+    from serviette.config.schema import ServietteConfig
+    from serviette.up import run
+
+    cfg = ServietteConfig.model_validate(
+        {
+            "sources": [{"type": "fs", "path": str(tmp_path / "nope")}],
+            "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+            "embedder": {"type": "mock"},
+        }
+    )
+    with pytest.raises(SystemExit) as exc:
+        run(cfg, str(tmp_path / "config.yaml"))
+    assert str(tmp_path / "nope") in str(exc.value)
+
+
 def test_sources_look_empty(tmp_path):
     from serviette.config.schema import ServietteConfig
     from serviette.up import _sources_look_empty

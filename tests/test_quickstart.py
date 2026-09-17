@@ -148,8 +148,9 @@ def test_wizard_run_collects_multiple_sources():
 
     tokens = [
         "2",                       # config type: indexer only
-        "1", "/data/a",            # source 1: filesystem (glob is YAML-only now)
-        "1", "/data/b",            # source 2: filesystem
+        "1", "/data/a", "1",       # source 1: filesystem (glob is YAML-only now);
+                                   # the folder does not exist -> "use anyway"
+        "1", "/data/b", "1",       # source 2: filesystem
         "6",                       # add another? -> Done
         "2",                       # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",   # pg connection string
@@ -209,7 +210,7 @@ def test_wizard_duckdb_happy_path_is_minimal(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # ./embeddings.duckdb must not exist
     tokens = [
         "2",            # config type: indexer only
-        "1", "/data/a",  # one filesystem source
+        "1", "/data/a", "1",  # one filesystem source (missing folder: use anyway)
         "6",            # done
         "1",            # vector db: duckdb -> defaults, no questions
         "1",            # embedder: local sentence_transformer -> no questions
@@ -223,3 +224,25 @@ def test_wizard_duckdb_happy_path_is_minimal(tmp_path, monkeypatch):
     assert cfg.vector_db.type == "duckdb"
     assert cfg.vector_db.path == "./embeddings.duckdb"
     assert cfg.embedder.type == "sentence_transformer"
+
+
+def test_wizard_fs_source_expands_tilde_and_reasks_missing_dir(tmp_path, monkeypatch):
+    """A mistyped folder is caught at the keyboard: the wizard re-asks unless
+    the user explicitly keeps it; ``~`` is expanded in the answer."""
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "docs").mkdir()
+    tokens = [
+        "2",                    # config type: indexer only
+        "1", "/no/such/dir",    # fs source: missing folder
+        "2",                    #   use anyway? -> No: ask again
+        "~/docs",               #   an existing folder, via ~
+        "6",                    # done
+        "1",                    # duckdb
+        "1",                    # local embedder
+        "K",                    # license key
+        "",                     # output path
+    ]
+    prompter = ScriptedPrompter(input_fn=_feed(tokens), output_fn=lambda _s: None)
+    answers = Wizard(prompter=prompter).run()
+    assert answers["sources"][0]["path"] == str(tmp_path / "docs")
