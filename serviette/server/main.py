@@ -119,7 +119,10 @@ def create_app(
             import time as _time
 
             started = _time.monotonic()
-            logger.info("warming up the local embedder...")
+            logger.info(
+                "warming up the local embedder (importing the ML stack and "
+                "loading the model — the port opens once this is done)..."
+            )
             await embedder.embed("serviette warmup")
             logger.info(
                 "embedder ready in %.1fs", _time.monotonic() - started
@@ -311,5 +314,14 @@ def run(config: ServietteConfig) -> None:
 
     import uvicorn
 
+    # uvicorn configures only its own loggers; without a root handler the
+    # warm-up progress above is silently dropped and the user stares at
+    # "Waiting for application startup." for as long as the model loads.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # Chatty at INFO: one line per HTTP request (httpx) and per model file
+    # the hub checks (sentence-transformers / huggingface_hub).
+    for name in ("httpx", "httpcore", "sentence_transformers", "huggingface_hub"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     app = create_app(config)
     uvicorn.run(app, host=config.server.host, port=config.server.port)

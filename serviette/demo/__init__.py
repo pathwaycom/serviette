@@ -37,7 +37,7 @@ _SCRIPT = """
  serviette demo — Lumina Coffee Systems
  Chat UI:  http://localhost:{port}
            (opens after the first indexing pass — wait for the
-            "index is ready — server started" line below; the first
+            "server is ready — open http://..." line below; the first
             run also downloads the embedding model, ~1-2 min)
 
  Your documents live in:

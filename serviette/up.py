@@ -3,8 +3,12 @@
 A deliberately dumb supervisor: it spawns ``serviette indexer``, waits until
 the vector store is queryable (printing an "indexing in progress" heartbeat
 — the chat page must never open onto a guaranteed error), then spawns
-``serviette server``. No refresh loops — every backend runs its native
-streaming mode, so freshness is seconds everywhere. Teardown rules:
+``serviette server`` and waits until its ``/api/v1/health`` answers before
+printing the URL to open (uvicorn binds the port only after the lifespan
+warm-up — a local embedder imports torch and loads its model there, tens of
+seconds during which the port is not even listening). No refresh loops —
+every backend runs its native streaming mode, so freshness is seconds
+everywhere. Teardown rules:
 
 - SIGINT/SIGTERM → terminate both children, exit 0.
 - server exits (any code) → terminate the indexer, exit with the server code.
@@ -179,6 +183,72 @@ def _wait_for_index(config: ServietteConfig, indexer: subprocess.Popen) -> int |
     return None
 
 
+def _server_url(config: ServietteConfig) -> str:
+    """The URL a browser on this machine opens (0.0.0.0 -> localhost)."""
+
+    host = config.server.host
+    if host in ("0.0.0.0", "127.0.0.1", "::"):
+        host = "localhost"
+    return f"http://{host}:{config.server.port}"
+
+
+def _server_ready(config: ServietteConfig) -> bool:
+    """True once the server answers ``/api/v1/health``.
+
+    Probed over loopback: ``up`` and the server share a host, and a bind on
+    0.0.0.0 / :: is reachable there too.
+    """
+
+    import httpx
+
+    try:
+        response = httpx.get(
+            f"http://127.0.0.1:{config.server.port}/api/v1/health", timeout=2.0
+        )
+    except httpx.HTTPError:
+        return False
+    return response.status_code == 200
+
+
+def _wait_for_server(
+    config: ServietteConfig,
+    server: subprocess.Popen,
+    indexer: subprocess.Popen,
+    *,
+    should_stop=lambda: False,
+    ready=_server_ready,
+) -> int | None:
+    """Block until the server answers its health check; heartbeat meanwhile.
+
+    Returns the exit code of a child that died first (the caller aborts
+    with it), otherwise None once the server is ready. ``should_stop`` lets
+    a signal handler cut the wait short (returns None; the caller checks
+    the flag). ``ready`` is injectable for tests.
+    """
+
+    started = time.monotonic()
+    last_beat = 0.0
+    while not ready(config):
+        if should_stop():
+            return None
+        server_code = server.poll()
+        if server_code is not None:
+            return server_code
+        indexer_code = indexer.poll()
+        if indexer_code is not None and indexer_code != 0:
+            return indexer_code
+        now = time.monotonic()
+        if now - last_beat >= _WAIT_HEARTBEAT:
+            last_beat = now
+            logger.info(
+                "up: server starting — loading the query embedder; the URL "
+                "appears once it answers (%.0fs elapsed)",
+                now - started,
+            )
+        time.sleep(0.5)
+    return None
+
+
 def run(config: ServietteConfig, config_path: str) -> int:
     """Supervise the two children; returns the exit code for the CLI."""
 
@@ -218,14 +288,23 @@ def run(config: ServietteConfig, config_path: str) -> int:
             return 0
 
         server = _spawn("server", config_path)
-        logger.info(
-            "up: index is ready — server started (pid %d); open http://%s:%d",
-            server.pid,
-            "localhost"
-            if config.server.host in ("0.0.0.0", "127.0.0.1")
-            else config.server.host,
-            config.server.port,
+        logger.info("up: index is ready — starting the server (pid %d)", server.pid)
+        # The port is not listening until the server's warm-up finishes;
+        # announcing the URL before that sends the user to a "connection
+        # refused" page.
+        failed = _wait_for_server(
+            config, server, indexer, should_stop=lambda: shutdown_requested
         )
+        if failed is not None:
+            if server.poll() is not None:
+                logger.error("up: server exited with code %d before it was ready", failed)
+            else:
+                logger.error("up: indexer exited with code %d", failed)
+            return failed
+        if shutdown_requested:
+            logger.info("up: shutting down")
+            return 0
+        logger.info("up: server is ready — open %s", _server_url(config))
         static_done_logged = False
         while True:
             if shutdown_requested:
@@ -265,4 +344,7 @@ def main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    # The readiness probe goes through httpx, which logs every request at
+    # INFO — that would print one line per health poll.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     sys.exit(run(load_config(args.config), args.config))
