@@ -212,7 +212,8 @@ hardcoded.
 
 **Supported embedders** (from `pathway.xpacks.llm.embedders`): `openai`,
 `litellm` (≈100 providers), `sentence_transformer` (fully local, no
-credentials — install `serviette[local]`), `gemini`, `bedrock`. Every family has a
+credentials — install `serviette[local]`), `gemini` (`serviette[gemini]`),
+`bedrock` (`serviette[bedrock]` for the server side). Every family has a
 matching async client on the server side, so one `embedder` section serves both
 components; make sure the indexer and server use the **same** model so vectors
 are comparable.
@@ -232,8 +233,8 @@ tiny (1 GB of PDFs stays a few KB in the pipeline). Today that means:
   Install the extra: `pip install "serviette[gdrive]"`.
 - **`s3`** — an S3 bucket or key prefix, including S3-compatible stores
   (MinIO, DigitalOcean, Wasabi) via `endpoint` + `with_path_style: true`.
-  Credentials fall back to the standard AWS chain when omitted. No extra
-  needed (boto3 ships with Pathway).
+  Credentials fall back to the standard AWS chain when omitted. Install the
+  extra: `pip install "serviette[s3]"`.
 - **`sharepoint`** — a SharePoint directory or file, authenticated with an
   app-registration certificate (`tenant`, `client_id`, `cert_path`,
   `thumbprint`). Requires a Pathway **Scale** license and

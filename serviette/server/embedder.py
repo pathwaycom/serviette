@@ -267,7 +267,13 @@ class BedrockAsyncEmbedder:
 
     def _ensure_client(self):
         if self._client is None:
-            import boto3
+            try:
+                import boto3
+            except ImportError as exc:  # pathway >= 0.33 no longer ships boto3
+                raise RuntimeError(
+                    "The bedrock embedder needs boto3 on the server: "
+                    'pip install "serviette[bedrock]"'
+                ) from exc
 
             self._client = boto3.client("bedrock-runtime", **self._client_kwargs)
         return self._client

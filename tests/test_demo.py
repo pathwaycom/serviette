@@ -34,7 +34,23 @@ def test_demo_openai_key_upgrades_llm_only(tmp_path, monkeypatch):
     assert "api_key" not in config["embedder"]
 
 
+def _pretend_sentence_transformers_installed(monkeypatch):
+    """The choice must not depend on whether the optional ``local`` extra
+    happens to be installed in the environment running the tests."""
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+
+    def find_spec(name, *args, **kwargs):
+        if name == "sentence_transformers":
+            return object()
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+
+
 def test_choose_embedder_stays_local_even_with_key(monkeypatch):
+    _pretend_sentence_transformers_installed(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     assert choose_embedder() == "sentence_transformer"
 
@@ -109,6 +125,7 @@ def test_demo_key_change_keeps_local_index(tmp_path, monkeypatch):
     touch the locally-embedded index."""
     from serviette.demo import prepare_demo_dir
 
+    _pretend_sentence_transformers_installed(monkeypatch)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     prepare_demo_dir(tmp_path, port=1, license_key="K")  # local embedder
     (tmp_path / "embeddings.duckdb").write_bytes(b"old vectors")

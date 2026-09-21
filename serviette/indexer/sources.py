@@ -186,7 +186,7 @@ class S3Fetcher:
 
     The ``only_metadata`` row's ``path`` field is the object key. ``client``
     is injectable for tests; in production a ``boto3`` client is built lazily
-    from the source settings (boto3 ships with pathway).
+    from the source settings (install the ``s3`` extra for boto3).
     """
 
     def __init__(self, src, client=None) -> None:
@@ -195,8 +195,13 @@ class S3Fetcher:
 
     def _ensure_client(self):
         if self._client is None:
-            import boto3
-            from botocore.config import Config
+            try:
+                import boto3
+                from botocore.config import Config
+            except ImportError as exc:  # pathway >= 0.33 no longer ships boto3
+                raise RuntimeError(
+                    'The s3 source needs boto3: pip install "serviette[s3]"'
+                ) from exc
 
             src = self._src
             kwargs: dict[str, Any] = {}

@@ -161,7 +161,7 @@ def test_bedrock_indexer_honours_model():
 
 
 def _fake_boto3(monkeypatch, response_body: dict):
-    import boto3
+    boto3 = pytest.importorskip("boto3")  # serviette[bedrock] / [dev]
 
     created: dict = {}
     invoked: dict = {}
