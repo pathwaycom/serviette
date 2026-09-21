@@ -29,7 +29,9 @@ from tests.integration_common import ALPHA, BETA, run_indexer, write_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
-IMAGE = "minio/minio:latest"
+# Docker Hub no longer serves ``minio/minio`` (pull access denied), so the
+# image comes from quay.io; pinned to a release tag for reproducible CI runs.
+IMAGE = "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
 BUCKET = "serviette-docs"
 ACCESS_KEY = "minioadmin"
 SECRET_KEY = "minioadmin"
