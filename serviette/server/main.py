@@ -201,8 +201,8 @@ def create_app(
             while True:
                 try:
                     tracker.observe(await accessor.stats())
-                except Exception:  # noqa: BLE001 - advisory only
-                    pass
+                except Exception as exc:  # noqa: BLE001 - advisory only
+                    logger.debug("index poll skipped: %s", exc)
                 await asyncio.sleep(_INDEX_POLL_SECONDS)
 
         poller = asyncio.create_task(_poll_index())
