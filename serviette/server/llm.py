@@ -35,6 +35,14 @@ class AsyncLLM(Protocol):
         """
         ...
 
+    async def prepare(self) -> None:
+        """Pay the one-time client setup (SDK import, connection pool) now.
+
+        Called from the server's startup so the first real question does
+        not. Must not issue a billable request.
+        """
+        ...
+
     async def close(self) -> None:
         ...
 
@@ -75,6 +83,9 @@ class MockLLM:
         # unavailable" and fall back (e.g. decomposition keeps the original
         # query only).
         return ""
+
+    async def prepare(self) -> None:
+        return None
 
     async def close(self) -> None:
         return None
@@ -165,6 +176,13 @@ class OpenAIChat:
         )
         return resp.choices[0].message.content or ""
 
+    async def prepare(self) -> None:
+        import asyncio
+
+        # Importing the openai SDK and building the client takes a second or
+        # two of blocking work; keep it off the event loop.
+        await asyncio.to_thread(self._ensure_client)
+
     async def close(self) -> None:
         if self._client is not None:
             await self._client.close()
@@ -210,6 +228,14 @@ class LiteLLMChat:
         if self._reasoning_effort is not None:
             kwargs["reasoning_effort"] = self._reasoning_effort
         return kwargs
+
+    async def prepare(self) -> None:
+        import asyncio
+        import importlib
+
+        # litellm is a heavy import (many seconds); do it at startup, off the
+        # event loop, rather than inside the first user's request.
+        await asyncio.to_thread(importlib.import_module, "litellm")
 
     async def _call(self, messages: list[dict]) -> str:
         import litellm

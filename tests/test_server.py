@@ -300,6 +300,28 @@ def test_stats_endpoint(store_path, mock_server_embedder):
     assert body["documents"] == 3
 
 
+def test_stats_last_indexed_at_moves_on_deletion(store_path, mock_server_embedder):
+    """Deleting rows is a change even though no row carries a newer seen_at."""
+
+    import time
+
+    import duckdb
+
+    with _client(store_path, mock_server_embedder) as client:
+        before = client.get("/api/v1/stats").json()
+        assert before["chunks"] == 3
+        # The fixture rows have no seen_at, so the backend reports nothing.
+        assert "last_indexed_at" not in before
+
+        conn = duckdb.connect(str(store_path))
+        conn.execute("DELETE FROM serviette_embeddings WHERE chunk_id = '2'")
+        conn.close()
+
+        after = client.get("/api/v1/stats").json()
+    assert after["chunks"] == 2
+    assert abs(after["last_indexed_at"] - int(time.time())) <= 2
+
+
 def test_frontend_can_be_disabled(store_path, mock_server_embedder):
     config = ServietteConfig(
         vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
@@ -345,6 +367,31 @@ def test_local_embedder_warmed_up_at_startup(store_path):
     embedder = CountingLocalEmbedder()
     with _client(store_path, embedder):
         assert CountingLocalEmbedder.calls == 1  # warm-up ran on startup
+
+
+def test_llm_client_prepared_at_startup_without_a_request(store_path, mock_server_embedder):
+    """The lifespan calls ``prepare`` on the LLM (client setup, no completion)."""
+
+    class RecordingLLM:
+        prepared = 0
+        completions = 0
+
+        async def prepare(self):
+            type(self).prepared += 1
+
+        async def complete(self, query, context, *, system_prompt=None):
+            type(self).completions += 1
+            return "answer"
+
+        async def raw(self, prompt):
+            return ""
+
+        async def close(self):
+            return None
+
+    with _client(store_path, mock_server_embedder, llm=RecordingLLM()):
+        assert RecordingLLM.prepared == 1
+        assert RecordingLLM.completions == 0  # nothing billable on startup
 
 
 def test_cors_disabled_by_default(store_path, mock_server_embedder):

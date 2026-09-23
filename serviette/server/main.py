@@ -61,6 +61,48 @@ class RagResponse(BaseModel):
     sources: list[RetrieveResult]
 
 
+class _IndexChangeTracker:
+    """Notice index changes the stored timestamps cannot show.
+
+    Accessors derive ``last_indexed_at`` from the newest row's ``seen_at``,
+    so a deletion (or an edit that only removes chunks) silently rolls the
+    value back to an older document. The tracker compares successive stats
+    snapshots and, when the row count or newest timestamp moves, records the
+    wall-clock time of that observation; ``observe`` then reports whichever
+    is later. State is per server process: after a restart the backend's
+    own value is used until the next change.
+    """
+
+    def __init__(self) -> None:
+        self._snapshot: tuple | None = None
+        self._changed_at: int | None = None
+
+    def observe(self, stats: dict[str, Any]) -> dict[str, Any]:
+        import time
+
+        key = (
+            stats.get("chunks"),
+            stats.get("documents"),
+            stats.get("last_indexed_at"),
+        )
+        if self._snapshot is None:
+            self._snapshot = key  # first look: nothing to compare against
+        elif key != self._snapshot:
+            self._snapshot = key
+            self._changed_at = int(time.time())
+        stored = stats.get("last_indexed_at")
+        if self._changed_at is not None and (
+            stored is None or self._changed_at > stored
+        ):
+            stats["last_indexed_at"] = self._changed_at
+        return stats
+
+
+# How often the server itself polls the backend for changes, so deletions
+# are stamped even while no chat page is open. Matches the page's own poll.
+_INDEX_POLL_SECONDS = 5.0
+
+
 def create_app(
     config: ServietteConfig,
     *,
@@ -108,6 +150,7 @@ def create_app(
         )
 
     title = config.frontend.title if config.frontend else APP_NAME
+    tracker = _IndexChangeTracker()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -136,9 +179,37 @@ def create_app(
             logger.info(
                 "reranker ready in %.1fs", _time.monotonic() - started
             )
+        # API clients (LLM, LLM reranker) are built lazily; building them
+        # here moves the SDK import and connection setup out of the first
+        # /rag request. No request is made — nothing billable.
+        for name, component in (("llm", llm), ("reranker", reranker)):
+            prepare = getattr(component, "prepare", None)
+            if prepare is None:
+                continue
+            import time as _time
+
+            started = _time.monotonic()
+            await prepare()
+            logger.info(
+                "%s client ready in %.1fs", name, _time.monotonic() - started
+            )
+        import asyncio
+
+        async def _poll_index() -> None:
+            # Failures here are the backend being not-ready or briefly
+            # locked; the next tick simply looks again.
+            while True:
+                try:
+                    tracker.observe(await accessor.stats())
+                except Exception:  # noqa: BLE001 - advisory only
+                    pass
+                await asyncio.sleep(_INDEX_POLL_SECONDS)
+
+        poller = asyncio.create_task(_poll_index())
         try:
             yield
         finally:
+            poller.cancel()
             await accessor.close()
             await embedder.close()
             if llm is not None:
@@ -274,7 +345,7 @@ def create_app(
         # can answer cheaply. Never fails the endpoint over a backend hiccup.
         data: dict[str, Any] = {"backend": backend_type}
         try:
-            data.update(await accessor.stats())
+            data.update(tracker.observe(await accessor.stats()))
         except Exception:  # noqa: BLE001 - stats are advisory
             data["stats_available"] = False
         return data

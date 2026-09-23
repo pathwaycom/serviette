@@ -129,6 +129,14 @@ class LLMReranker:
             self._chat = build_llm(LLMConfig(**merged))
         return self._chat
 
+    async def prepare(self) -> None:
+        """Build the scoring LLM client now (no request), see AsyncLLM.prepare."""
+
+        chat = self._ensure_chat()
+        prepare = getattr(chat, "prepare", None)
+        if prepare is not None:
+            await prepare()
+
     async def rerank(
         self, query: str, hits: list[dict[str, Any]], k: int
     ) -> list[dict[str, Any]]:
