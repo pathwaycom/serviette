@@ -9,10 +9,25 @@ a YAML file, and run a few commands. From then on, any change you make to the
 documents — an edit, a new file, a deletion — is reflected in answers within
 seconds.
 
+Try it in three commands:
+
+```bash
+pip install serviette
+export OPENAI_API_KEY=sk-...
+serviette demo --embedder openai      # → chat at http://localhost:8989
+```
+
+This indexes a [small bundled corpus](serviette/demo/corpus) (a fictional
+coffee-machine company) into `./serviette-demo/docs` and opens a chat over
+it. Edit or drop files into that folder while it runs — the answers
+follow within seconds.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/demo.gif" alt="serviette: CLI walkthrough then the web chat UI" width="100%">
 </p>
 <p align="center"><em>From zero to a live RAG stack in two commands — then edit a document and watch the answer change.</em></p>
+
+To run it over your own documents, generate a config and start the stack:
 
 ```bash
 pip install "serviette[local]"   # [local] = free local embeddings, the wizard's default (~4.5 GB PyTorch stack);
@@ -23,11 +38,8 @@ serviette quickstart                       # interactive config wizard
 serviette up --config config.yaml          # indexer + server together → http://localhost:8989
 ```
 
-(Or start with `serviette demo` — a zero-setup playground on a bundled
-corpus: it copies everything into `./serviette-demo/docs`, and any files you
-drop there while it runs are answerable within seconds. Production
-deployments run `serviette indexer` and `serviette server` separately —
-that is what `up` supervises.)
+(Production deployments run `serviette indexer` and `serviette server`
+separately — that is what `up` supervises.)
 
 The server hosts both the web chat UI (on `/`) and the versioned REST API
 (under `/api/v1`) on one port:
