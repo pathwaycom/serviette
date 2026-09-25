@@ -27,6 +27,17 @@ Cross-restart parse caching is delegated entirely to Pathway:
 ``<persistence dir>/runtime_calls`` whenever persistence is enabled — which is
 the default. No caching machinery lives in serviette; disabling persistence also
 disables the parse cache (every restart re-fetches and re-parses).
+
+Failures
+--------
+One bad object must never kill the streaming pipeline, so a document whose
+bytes cannot be fetched (after ``indexer.fetch_retries`` retries with
+exponential backoff — remote sources fail transiently under bulk backfills)
+or parsed indexes as empty text, with an ERROR log naming the object. That
+empty result is final for this version of the object: a restart replays the
+persisted input through the UDF but discards the replayed output as already
+committed, so the only retry is a re-emission by the source — touch the file
+or re-upload the object once the cause is fixed.
 """
 
 from __future__ import annotations
@@ -38,6 +49,7 @@ import inspect
 import json
 import logging
 import os
+import time
 from typing import Any, ClassVar
 
 import pathway as pw
@@ -70,6 +82,52 @@ def _json_to_dict(value: Any) -> dict[str, Any]:
 # Parser dispatch (xpack parsers, called imperatively because only_metadata
 # means we hold paths, not bytes, in the graph)
 # ---------------------------------------------------------------------------
+
+
+class ParseError(RuntimeError):
+    """A document could not be fetched or parsed.
+
+    Raised by the fetch/parse helpers; the parse UDF catches it, logs the
+    object at ERROR level and indexes the document as empty text.
+    """
+
+
+# Exponential backoff for byte fetches: 1s, 2s, 4s, ... capped per attempt.
+_FETCH_BACKOFF_BASE = 1.0
+_FETCH_BACKOFF_CAP = 30.0
+
+
+def fetch_with_retries(fetcher: Fetcher, meta: dict, retries: int) -> tuple[bytes, str]:
+    """``fetcher.fetch(meta)`` with up to ``retries`` retries on any error.
+
+    Remote sources (Drive, S3, SharePoint) fail transiently — rate limits,
+    connection resets — exactly during the bulk backfills that hit them
+    hardest; a local file can be momentarily locked by whatever is writing
+    it. Without a retry each such blip used to become a silently empty
+    document. Raises :class:`ParseError` once the attempts are exhausted.
+    """
+
+    attempts = retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return fetcher.fetch(meta)
+        except Exception as exc:  # backend-specific errors; retried uniformly
+            if attempt >= attempts:
+                raise ParseError(
+                    f"could not fetch {meta.get('path') or meta.get('name') or meta} "
+                    f"after {attempts} attempt(s): {exc}"
+                ) from exc
+            delay = min(_FETCH_BACKOFF_BASE * 2 ** (attempt - 1), _FETCH_BACKOFF_CAP)
+            logger.warning(
+                "Fetch of %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                meta.get("path") or meta.get("name") or meta,
+                attempt,
+                attempts,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 class ParserRegistry:
@@ -205,9 +263,19 @@ class ParserRegistry:
                 return modality
         return "office"
 
-    def _route(self, suffix: str, name: str) -> tuple[str, dict]:
+    def _route(self, suffix: str, name: str, path: str = "") -> tuple[str, dict]:
+        """Pick (parser type, options) for a file.
+
+        A rule matches when any of its globs matches the file *name* or its
+        *path* (as the source reports it: absolute for ``fs``, the object key
+        for ``s3``, ...) — so ``*.pdf`` and ``scans/*.png`` both work. With
+        neither known, a synthetic ``x<suffix>`` name keeps pure-extension
+        rules working.
+        """
+
+        candidates = [c for c in (name, path) if c] or [f"x{suffix}"]
         for rule in self._rules:
-            if any(fnmatch.fnmatch(name or f"x{suffix}", pat) for pat in rule.match):
+            if any(fnmatch.fnmatch(c, pat) for c in candidates for pat in rule.match):
                 return rule.type, dict(rule.options)
         return self._default_for(self._modality_for(suffix))
 
@@ -230,8 +298,10 @@ class ParserRegistry:
             self._instances[key] = classes[kind](**options)
         return self._instances[key]
 
-    def parse(self, contents: bytes, suffix: str, name: str = "") -> str:
-        kind, options = self._route(suffix, name)
+    def parse(
+        self, contents: bytes, suffix: str, name: str = "", path: str = ""
+    ) -> str:
+        kind, options = self._route(suffix, name, path)
         if kind == "skip":
             reason = options.get("reason", "no parser configured")
             if reason not in self._warned:
@@ -256,14 +326,8 @@ class ParserRegistry:
             if inspect.isawaitable(result):
                 # Some xpack parsers return a bare Awaitable rather than a Coroutine.
                 result = asyncio.run(result)  # type: ignore[arg-type]
-        except Exception as exc:  # noqa: BLE001 - one bad file must never kill the pipeline
-            logger.warning(
-                "Failed to parse %r with the %r parser: %s — file skipped",
-                name or suffix,
-                kind,
-                exc,
-            )
-            return ""
+        except Exception as exc:  # reported to the caller, not swallowed: see ParseError
+            raise ParseError(f"{kind!r} parser failed on {name or suffix!r}: {exc}") from exc
         # result is list[(text, metadata)]; concatenate element texts — our own
         # splitter re-chunks downstream. str() because some parsers return
         # str-like objects (e.g. PaddleOCR's MarkdownResult), not plain str.
@@ -273,6 +337,16 @@ class ParserRegistry:
 # ---------------------------------------------------------------------------
 # Embedder / splitter builders (xpack)
 # ---------------------------------------------------------------------------
+
+
+# OpenAI SDK *client* constructor options the server-side embedder accepts in
+# the same ``embedder`` section; the xpack has no way to take them (it builds
+# the client itself), so the indexer must refuse them instead of crashing on
+# the first chunk. ``base_url`` (own message) and ``timeout`` (also a valid
+# per-call parameter of embeddings.create) are handled separately.
+_OPENAI_CLIENT_ONLY_KEYS = frozenset(
+    {"organization", "project", "max_retries", "default_headers", "default_query"}
+)
 
 
 def build_xpack_embedder(cfg) -> pw.UDF:
@@ -320,6 +394,19 @@ def build_xpack_embedder(cfg) -> pw.UDF:
                 "For an OpenAI-compatible endpoint set the OPENAI_BASE_URL environment "
                 "variable for both the indexer and the server, or use "
                 "'type: litellm' with 'model: openai/<model>' and 'api_base: <url>'."
+            )
+        client_only = sorted(_OPENAI_CLIENT_ONLY_KEYS & common.keys())
+        if client_only:
+            # Same failure mode as base_url: the server routes these to the
+            # AsyncOpenAI constructor, the xpack would pass them to
+            # embeddings.create and crash on the first chunk.
+            raise ValueError(
+                f"embedder type 'openai' does not accept {client_only} on the "
+                "indexer (pathway's OpenAIEmbedder builds its own client and "
+                "forwards extra keys to embeddings.create). Alternatives: "
+                "OPENAI_ORG_ID / OPENAI_PROJECT_ID environment variables for "
+                "organization/project; 'retries: N' for engine-level backoff "
+                "instead of max_retries; 'type: litellm' for custom headers."
             )
         return embedders.OpenAIEmbedder(api_key=cfg.api_key, **common)
     if cfg.type == "litellm":
@@ -433,16 +520,31 @@ def build_graph(
         size_limit=config.indexer.parse_cache_size_gb * 2**30
     )
 
+    fetch_retries = config.indexer.fetch_retries
+
     def make_parse_udf(fetcher: Fetcher):
         @pw.udf(deterministic=False, cache_strategy=cache_strategy)
         def parse_document(metadata: pw.Json) -> str:
             meta = _json_to_dict(metadata)
+            # Only gdrive reports a ``name``; every other source reports the
+            # object's ``path`` (absolute fs path, S3 key, server-relative
+            # SharePoint URL, in-filesystem path). Rules match on either.
+            path = str(meta.get("path") or "")
+            name = str(meta.get("name") or os.path.basename(path))
             try:
-                contents, suffix = fetcher.fetch(meta)
-            except Exception as exc:  # noqa: BLE001 - object may have vanished / be unreadable
-                logger.warning("Could not fetch source object %s: %s", meta, exc)
+                contents, suffix = fetch_with_retries(fetcher, meta, fetch_retries)
+                return registry.parse(contents, suffix, name, path)
+            except ParseError as exc:
+                # One bad object must never kill the pipeline: index it as
+                # empty and say so loudly, per object (not once per reason).
+                # There is no automatic retry beyond fetch_retries — see the
+                # module docstring ("Failures").
+                logger.error(
+                    "%s — the document is indexed as EMPTY. Fix the cause, "
+                    "then touch the file / re-upload the object to retry it.",
+                    exc,
+                )
                 return ""
-            return registry.parse(contents, suffix, str(meta.get("name", "")))
 
         return parse_document
 
@@ -461,11 +563,12 @@ def build_graph(
         return [chunk for chunk, _meta in splitter.chunk(text)]
 
     @pw.udf(deterministic=True)
-    def make_id(meta_json: str, text: str) -> str:
-        # meta_json is the canonical per-document serialization from
-        # _metadata_as_json, so the id is reproducible for (metadata, text).
+    def make_id(key_json: str, text: str) -> str:
+        # key_json is the canonical per-document serialization from
+        # _metadata_key_json (the observation timestamp excluded), so the id
+        # is reproducible for (document version, text) across restarts.
         digest = hashlib.sha256()
-        digest.update(meta_json.encode("utf-8"))
+        digest.update(key_json.encode("utf-8"))
         digest.update(b"\x00")
         digest.update(text.encode("utf-8"))
         return digest.hexdigest()
@@ -488,12 +591,13 @@ def build_graph(
     )
 
     # -- split -> flatten -> embed -------------------------------------------
-    # The canonical metadata JSON is computed once per DOCUMENT here; flatten
-    # then replicates the reference per chunk instead of re-serializing the
-    # same dict for every chunk.
+    # The canonical metadata JSONs (the stored form and the chunk-id key) are
+    # computed once per DOCUMENT here; flatten then replicates the references
+    # per chunk instead of re-serializing the same dict for every chunk.
     chunked = parsed.select(
         _metadata=pw.this._metadata,
         meta_json=_metadata_as_json(pw.this._metadata),
+        key_json=_metadata_key_json(pw.this._metadata),
         chunk=split_text(pw.this.text),
     )
     exploded = chunked.flatten(pw.this.chunk)
@@ -509,7 +613,7 @@ def build_graph(
     # Pathway reserves the column name "id", so the chunk's primary key lives in
     # "chunk_id"; the sinks map it to each backend's id/primary-key field.
     embedded = exploded.select(
-        chunk_id=make_id(pw.this.meta_json, pw.this.chunk),
+        chunk_id=make_id(pw.this.key_json, pw.this.chunk),
         text=pw.this.chunk,
         metadata=pw.this._metadata,
         metadata_json=pw.this.meta_json,
@@ -577,12 +681,43 @@ def _metadata_as_json(metadata: pw.Json) -> str:
     """Serialize the metadata dict to one canonical JSON string.
 
     Computed once per *document* (before chunk flattening) and reused for
-    every chunk: as the string form stored by backends whose record metadata
-    must be scalar (duckdb/chroma/weaviate/pinecone), and as the metadata part
-    of the chunk id hash. sort_keys/ensure_ascii keep it byte-stable.
+    every chunk as the string form stored by backends whose record metadata
+    must be scalar (duckdb/chroma/weaviate/pinecone). Keeps every field the
+    connector emitted, including ``seen_at`` (the server's ``last_indexed_at``
+    comes from it). sort_keys/ensure_ascii keep it byte-stable.
     """
 
     return json.dumps(_json_to_dict(metadata), sort_keys=True, ensure_ascii=True)
+
+
+# Metadata fields excluded from the chunk-id key. ``seen_at`` is the moment
+# the connector *observed* the object, not a property of the object: it
+# changes on every cold start (no persistence, or a dropped persistence
+# directory) while the document itself does not. With it in the key, every
+# such restart would write the whole corpus next to the previous copy instead
+# of upserting over it. Every other field stays in the key on purpose: any
+# field whose change makes the connector re-emit the row must make the new
+# key differ from the old one, so that a modification is a clean DELETE of
+# the old key plus INSERT of the new one in the snapshot sinks — never a
+# -1/+1 pair on the same key within one batch.
+_KEY_EXCLUDED_FIELDS = frozenset({"seen_at"})
+
+# Bump when the chunk-id derivation changes. Recorded in the persistence
+# fingerprint: ``make_id`` is deterministic, so on a retraction Pathway
+# recomputes ids with the *current* function — a different scheme than the
+# one the stored rows were written with leaves orphans behind.
+CHUNK_ID_SCHEME = 2
+
+
+@pw.udf(deterministic=True)
+def _metadata_key_json(metadata: pw.Json) -> str:
+    """The document-identity part of the chunk id: the stored metadata minus
+    the observation-only fields (see ``_KEY_EXCLUDED_FIELDS``)."""
+
+    meta = {
+        k: v for k, v in _json_to_dict(metadata).items() if k not in _KEY_EXCLUDED_FIELDS
+    }
+    return json.dumps(meta, sort_keys=True, ensure_ascii=True)
 
 
 def _write_pgvector(table: pw.Table, vdb) -> None:
@@ -738,12 +873,18 @@ def _write_mongodb(table: pw.Table, vdb) -> None:
 
 
 def _libpq_settings(connection_string: str) -> dict[str, Any]:
-    """Parse a ``postgresql://`` URL into a pw.io.postgres settings dict."""
+    """Parse a ``postgresql://`` URL into a pw.io.postgres settings dict.
 
-    from urllib.parse import unquote, urlparse
+    Query parameters (``?sslmode=require&connect_timeout=5``) are libpq
+    keywords and pass through verbatim — the server side (asyncpg) honours
+    them from the same string, so the indexer must too, or a TLS-only
+    database accepts queries and rejects the writer.
+    """
+
+    from urllib.parse import parse_qsl, unquote, urlparse
 
     parsed = urlparse(connection_string)
-    settings: dict[str, Any] = {}
+    settings: dict[str, Any] = dict(parse_qsl(parsed.query, keep_blank_values=False))
     if parsed.hostname:
         settings["host"] = parsed.hostname
     if parsed.port:

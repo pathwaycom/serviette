@@ -394,3 +394,28 @@ def test_pyfilesystem_source_without_extra_fails_helpfully(monkeypatch):
     with _pytest.raises(SystemExit) as exc:
         read_source(src, name="s")
     assert "serviette[pyfilesystem]" in str(exc.value)
+
+
+def test_gdrive_read_forwards_object_size_limit(monkeypatch):
+    """``object_size_limit`` is a schema field; it must reach the connector."""
+
+    import pathway as pw
+
+    from serviette.config.schema import GDriveSource
+    from serviette.indexer.sources import read_source
+
+    captured: dict = {}
+
+    def fake_read(object_id, **kwargs):
+        captured.update(kwargs, object_id=object_id)
+        return "table"
+
+    monkeypatch.setattr(pw.io.gdrive, "read", fake_read)
+    src = GDriveSource(
+        object_id="folder-1",
+        service_user_credentials_file="creds.json",
+        object_size_limit=50_000_000,
+    )
+    assert read_source(src, name="source_0") == "table"
+    assert captured["object_size_limit"] == 50_000_000
+    assert captured["format"] == "only_metadata"

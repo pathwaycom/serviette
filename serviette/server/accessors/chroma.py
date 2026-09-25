@@ -18,6 +18,19 @@ from serviette.server.hybrid import KeywordHybridMixin
 _SCAN_PAGE = 1000
 
 
+def _or_empty(value: Any) -> Any:
+    """``value or []`` that survives numpy: chromadb >= 0.5 returns result
+    embeddings as ``numpy.ndarray``, whose truth value raises."""
+
+    return [] if value is None else value
+
+
+def _first_or_empty(value: Any) -> Any:
+    """First per-query entry of a query-result field (``None``-safe)."""
+
+    return value[0] if value is not None and len(value) else []
+
+
 def _chroma_metadata(meta: Any) -> dict[str, Any]:
     raw = (meta or {}).get("metadata")
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -69,7 +82,7 @@ class ChromaAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         documents = (response.get("documents") or [[]])[0]
         metadatas = (response.get("metadatas") or [[]])[0]
         distances = (response.get("distances") or [[]])[0]
-        embeddings = (response.get("embeddings") or [[]])[0] if with_embeddings else []
+        embeddings = _first_or_empty(response.get("embeddings")) if with_embeddings else []
         vector_hits: list[dict[str, Any]] = []
         for i, (text, meta, distance) in enumerate(
             zip(documents, metadatas, distances)
@@ -103,7 +116,7 @@ class ChromaAccessor(KeywordHybridMixin, AsyncVectorAccessor):
             )
             documents = page.get("documents") or []
             metadatas = page.get("metadatas") or []
-            embeddings = page.get("embeddings") or []
+            embeddings = _or_empty(page.get("embeddings"))
             if not documents:
                 break
             for i, (text, meta) in enumerate(zip(documents, metadatas)):

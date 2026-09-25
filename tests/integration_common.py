@@ -148,6 +148,15 @@ def run_backend_scenario(
         fused = _retrieve_ex(make_hybrid_accessor, ALPHA, k=2, query_text=ALPHA)
         assert paths_of(fused) == {"a.txt", "b.txt"}
         assert fused[0]["metadata"]["path"].endswith("a.txt")
+        # hybrid + MMR: the BM25 corpus is scanned with vectors (chromadb
+        # hands them back as numpy arrays — truthiness checks must not trip).
+        fused_emb = _retrieve_ex(
+            make_hybrid_accessor, ALPHA, k=2, query_text=ALPHA, with_embeddings=True
+        )
+        assert paths_of(fused_emb) == {"a.txt", "b.txt"}
+        assert all(
+            isinstance(h.get("embedding"), list) and h["embedding"] for h in fused_emb
+        ), "hybrid with_embeddings=True must carry the stored vectors"
 
     # -- pass 2: deleting b.txt removes its vectors (snapshot semantics) ------
     (docs / "b.txt").unlink()

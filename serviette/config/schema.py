@@ -169,10 +169,13 @@ class PyFilesystemSource(BaseModel):
 
 
 class ParserRule(BaseModel):
-    """One routing rule of the ``parser:`` section: files whose names match
-    any of the ``match`` globs are parsed by ``type``. Rules are checked in
-    order, first match wins; built-in keyless-first defaults cover whatever
-    the user rules don't. ``options`` are forwarded to the parser constructor
+    """One routing rule of the ``parser:`` section: files whose name *or*
+    path (as the source reports it — absolute for ``fs``, the object key for
+    ``s3``, the server-relative URL for ``sharepoint``) matches any of the
+    ``match`` globs are parsed by ``type``; ``*`` also matches ``/``, so
+    ``*/scans/*.png`` selects a folder. Rules are checked in order, first
+    match wins; built-in keyless-first defaults cover whatever the user
+    rules don't. ``options`` are forwarded to the parser constructor
     (e.g. ``prompt`` for twelvelabs_video, ``model``/``api_key`` for
     whisper); ``${ENV_VAR}`` interpolation applies as everywhere."""
 
@@ -550,6 +553,11 @@ class IndexerConfig(BaseModel):
     # itself through `pathway spawn --processes N` (one worker thread each);
     # sinks that key rows internally (e.g. qdrant) write in parallel.
     workers: int = Field(default=1, ge=1)
+    # Retries of a document's byte fetch before it is given up on (indexed as
+    # empty, ERROR-logged, retried on the next restart). Exponential backoff
+    # from 1s. Remote sources fail transiently under bulk backfills — rate
+    # limits, connection resets — so 0 is only for tests.
+    fetch_retries: int = Field(default=3, ge=0)
     # Advanced. Disk budget for the parse cache (pw.udfs.DefaultCache, stored
     # under <persistence dir>/runtime_calls, LRU-evicted). Size it at least to
     # the extracted-text volume of the corpus to avoid re-parse churn.

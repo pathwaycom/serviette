@@ -313,7 +313,18 @@ def test_stats_last_indexed_at_moves_on_deletion(store_path, mock_server_embedde
         # The fixture rows have no seen_at, so the backend reports nothing.
         assert "last_indexed_at" not in before
 
-        conn = duckdb.connect(str(store_path))
+        # The server's index poller opens short-lived read-only connections
+        # from a worker thread; DuckDB refuses a read-write connection to the
+        # same file from the same process while one of those is open. Retry
+        # through that window instead of racing it.
+        for _ in range(100):
+            try:
+                conn = duckdb.connect(str(store_path))
+                break
+            except duckdb.ConnectionException:
+                time.sleep(0.02)
+        else:
+            raise AssertionError("could not open a read-write DuckDB connection")
         conn.execute("DELETE FROM serviette_embeddings WHERE chunk_id = '2'")
         conn.close()
 

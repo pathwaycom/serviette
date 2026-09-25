@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from serviette.config.schema import ServietteConfig
-from serviette.up import _server_url, _wait_for_server
+from serviette.up import _server_url, _wait_for_index, _wait_for_server
 
 
 class FakeProc:
@@ -96,3 +96,25 @@ def test_server_url_maps_wildcard_binds_to_localhost():
     assert _server_url(_config("0.0.0.0", 8989)) == "http://localhost:8989"
     assert _server_url(_config("127.0.0.1", 8989)) == "http://localhost:8989"
     assert _server_url(_config("192.168.1.5", 9000)) == "http://192.168.1.5:9000"
+
+
+def test_index_wait_stops_on_shutdown_request(monkeypatch):
+    """A SIGTERM during the first indexing pass must end the wait even though
+    the store never becomes ready (the caller then tears the children down)."""
+
+    monkeypatch.setattr("serviette.up._sources_look_empty", lambda _c: False)
+    result = _wait_for_index(
+        _config(),
+        FakeProc([None]),
+        should_stop=lambda: True,
+        ready=lambda _c, allow_empty: False,
+    )
+    assert result is None
+
+
+def test_index_wait_reports_indexer_failure(monkeypatch):
+    monkeypatch.setattr("serviette.up._sources_look_empty", lambda _c: False)
+    result = _wait_for_index(
+        _config(), FakeProc([3]), ready=lambda _c, allow_empty: False
+    )
+    assert result == 3

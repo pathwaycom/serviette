@@ -147,11 +147,21 @@ def _index_ready(config: ServietteConfig, *, allow_empty: bool = False) -> bool:
         return False
 
 
-def _wait_for_index(config: ServietteConfig, indexer: subprocess.Popen) -> int | None:
+def _wait_for_index(
+    config: ServietteConfig,
+    indexer: subprocess.Popen,
+    *,
+    should_stop=lambda: False,
+    ready=_index_ready,
+) -> int | None:
     """Block until the store is queryable; heartbeat to the console.
 
     Returns the indexer's exit code if it died before producing anything
-    (the caller aborts), otherwise None once the index is ready.
+    (the caller aborts), otherwise None once the index is ready. Like
+    ``_wait_for_server``, ``should_stop`` lets a signal handler cut the wait
+    short (returns None; the caller checks the flag) — otherwise a SIGTERM
+    during a long first indexing pass would be ignored until the first
+    chunks land. ``ready`` is injectable for tests.
     """
 
     started = time.monotonic()
@@ -162,7 +172,9 @@ def _wait_for_index(config: ServietteConfig, indexer: subprocess.Popen) -> int |
             "up: the source folders are empty — starting with an empty "
             "index; documents dropped in later are indexed live"
         )
-    while not _index_ready(config, allow_empty=allow_empty):
+    while not ready(config, allow_empty=allow_empty):
+        if should_stop():
+            return None
         code = indexer.poll()
         if code is not None and code != 0:
             return code
@@ -277,7 +289,9 @@ def run(config: ServietteConfig, config_path: str) -> int:
     try:
         # The chat page must never open onto a guaranteed "index not ready"
         # error: hold the server back until the store answers a probe.
-        failed = _wait_for_index(config, indexer)
+        failed = _wait_for_index(
+            config, indexer, should_stop=lambda: shutdown_requested
+        )
         if failed is not None:
             logger.error(
                 "up: indexer exited with code %d before the index was ready", failed

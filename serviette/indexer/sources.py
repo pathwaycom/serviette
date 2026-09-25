@@ -65,6 +65,7 @@ def read_source(src, name: str) -> pw.Table:
             mode=src.mode,
             service_user_credentials_file=src.service_user_credentials_file,
             file_name_pattern=src.file_name_pattern,
+            object_size_limit=src.object_size_limit,
             max_backlog_size=src.max_backlog_size,
             name=name,
         )

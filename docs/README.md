@@ -164,7 +164,7 @@ hardcoded.
 | **pyfilesystem** `sources[].fs_url` | str | — (required) | indexer | Any PyFilesystem URL: `ftp://…`, `ssh://…`, `webdav://…`, `zip://…`, `osfs://…` (extra: `serviette[pyfilesystem]`; some protocols need a driver package). |
 | **pyfilesystem** `sources[].path` | str | `""` | indexer | Path inside the opened filesystem (recursive). |
 | **pyfilesystem** `sources[].refresh_interval` | float | `30.0` | indexer | Seconds between scans (streaming mode). |
-| `parser` | list of rules | keyless-first defaults | indexer | Routing rules `{match: ["*.pdf"], type: docling, options: {...}}`, first match wins; unmatched files use built-in defaults (text→utf8, pdf→docling/pypdf, office→unstructured, images→paddle_ocr, audio→whisper if `OPENAI_API_KEY`, video→twelvelabs_video if `TWELVELABS_API_KEY`, else skip+warn). Types: `utf8`, `pypdf`, `docling`, `unstructured`, `paddle_ocr`, `vision_image`, `vision_slide`, `whisper`, `twelvelabs_video`, `skip`. Changing routing is fingerprint-guarded. |
+| `parser` | list of rules | keyless-first defaults | indexer | Routing rules `{match: ["*.pdf"], type: docling, options: {...}}` — globs are tried against the file name and its path as the source reports it (`*` matches `/`, so `*/scans/*.png` selects a folder), first match wins; unmatched files use built-in defaults (text→utf8, pdf→docling/pypdf, office→unstructured, images→paddle_ocr, audio→whisper if `OPENAI_API_KEY`, video→twelvelabs_video if `TWELVELABS_API_KEY`, else skip+warn). Types: `utf8`, `pypdf`, `docling`, `unstructured`, `paddle_ocr`, `vision_image`, `vision_slide`, `whisper`, `twelvelabs_video`, `skip`. Changing routing is fingerprint-guarded. |
 | `vector_db.type` | `duckdb`\|`pgvector`\|`milvus`\|`qdrant`\|`chroma`\|`weaviate`\|`pinecone`\|`mongodb` | — (required) | both | Vector database backend (see [Backends](#vector-database-backends)). |
 | **duckdb** `vector_db.path` | str | — (required) | both | Path to the DuckDB database file. |
 | **duckdb** `vector_db.table` | str | `serviette_embeddings` | both | Target table. |
@@ -196,6 +196,7 @@ hardcoded.
 | `splitter.type` | `token_count`\|`recursive` | `token_count` | indexer | Chunking strategy. |
 | `splitter.chunk_size` | int | `512` | indexer | Max chunk size (tokens). |
 | `splitter.chunk_overlap` | int | `50` | indexer | Overlap (used by `recursive`). |
+| `indexer.fetch_retries` | int | `3` | indexer | Retries (exponential backoff from 1s) of a document's byte fetch before it is given up on: indexed as empty and ERROR-logged. Remote sources fail transiently under bulk backfills. |
 | `indexer.workers` | int | `1` | indexer | Worker **processes** (sharded via `pathway spawn`). Raise for large backfills — each worker carries its own embedding stack (~1 GB with local embeddings); the benchmarks run with `8`. |
 | `persistence.enabled` | bool | `true` | indexer | See [Persistence](#5-persistence). |
 | `persistence.backend` | `filesystem` | `filesystem` | indexer | Persistence backend. |
@@ -366,6 +367,12 @@ The same persistence directory also hosts the **parse cache**
 `indexer.parse_cache_size_gb`, default 8): extracted document text stays warm
 across restarts, so unchanged documents are neither re-downloaded nor
 re-parsed. Disabling persistence also disables the parse cache.
+
+A document whose bytes cannot be fetched (after `indexer.fetch_retries`
+retries) or parsed does not stop the indexer: it is indexed as **empty** and
+logged at ERROR level with its path. That result sticks for this version of
+the object — a restart alone does not retry it — so fix the cause and then
+touch the file (or re-upload the object) to have the source re-emit it.
 
 Disabling persistence still produces identical vectors for a given set of files;
 it only forgoes the cross-restart diffing and caching.

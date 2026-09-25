@@ -99,6 +99,24 @@ def test_openai_indexer_rejects_base_url_with_guidance():
         )
 
 
+@pytest.mark.parametrize("key", ["organization", "project", "max_retries", "default_headers"])
+def test_openai_indexer_rejects_client_only_keys(key):
+    """Keys the server routes to the AsyncOpenAI constructor would reach
+    ``embeddings.create`` in the xpack and fail on the first chunk: refuse
+    them at build time with alternatives."""
+    with pytest.raises(ValueError, match=key):
+        _indexer_embedder(EmbedderConfig(type="openai", api_key="sk-test", **{key: "x"}))
+
+
+def test_openai_client_only_keys_mirror_the_server():
+    """The indexer's refusal list must track what the server treats as
+    client-level, or the two sides drift apart again."""
+    from serviette.indexer.graph import _OPENAI_CLIENT_ONLY_KEYS
+    from serviette.server.embedder import OpenAIAsyncEmbedder
+
+    assert _OPENAI_CLIENT_ONLY_KEYS | {"base_url", "timeout"} == OpenAIAsyncEmbedder._CLIENT_KEYS
+
+
 # ---------------------------------------------------------------------------
 # litellm
 # ---------------------------------------------------------------------------

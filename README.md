@@ -17,7 +17,7 @@ export OPENAI_API_KEY=sk-...
 serviette demo --embedder openai      # → chat at http://localhost:8989
 ```
 
-This indexes a [small bundled corpus](serviette/demo/corpus) (a fictional
+This indexes a [small bundled corpus](https://github.com/pathwaycom/serviette/tree/main/serviette/demo/corpus) (a fictional
 coffee-machine company) into `./serviette-demo/docs` and opens a chat over
 it. Edit or drop files into that folder while it runs — the answers
 follow within seconds.

@@ -124,3 +124,25 @@ def test_dimensions_change_is_flagged(tmp_path, monkeypatch):
     check_fingerprint(_config_with_embedder(tmp_path, dimensions=256))
     with pytest.raises(SystemExit, match="Refusing to start"):
         check_fingerprint(_config_with_embedder(tmp_path, dimensions=512))
+
+
+def test_fingerprint_records_chunk_id_scheme(tmp_path):
+    from serviette.indexer.graph import CHUNK_ID_SCHEME
+
+    assert build_fingerprint(_config(tmp_path))["chunk_id"] == {"scheme": CHUNK_ID_SCHEME}
+
+
+def test_pre_scheme_fingerprint_is_flagged(tmp_path, monkeypatch):
+    """A persistence directory built before the chunk-id scheme was recorded
+    (or under an older scheme) must prompt: its rows carry ids the current
+    ``make_id`` would not reproduce on retraction."""
+
+    monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", raising=False)
+    config = _config(tmp_path)
+    check_fingerprint(config)
+    path = tmp_path / "persist" / _FILENAME
+    stored = json.loads(path.read_text())
+    del stored["chunk_id"]
+    path.write_text(json.dumps(stored))
+    with pytest.raises(SystemExit, match="Refusing to start"):
+        check_fingerprint(config)

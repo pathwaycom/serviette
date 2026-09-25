@@ -17,7 +17,10 @@ hash) in ``<persistence dir>/serviette-fingerprint.json``:
   ``output_dimensionality``, ``api_base``, ...) — never credentials, and
   not the throughput knobs (batch size, capacity, retries),
 - versions of the libraries whose behavior shapes the outputs
-  (pathway, tiktoken, langchain_text_splitters).
+  (pathway, tiktoken, langchain_text_splitters),
+- the chunk-id scheme (``graph.CHUNK_ID_SCHEME``): the id derivation is a
+  deterministic UDF too, so rows written under an older scheme cannot be
+  retracted by a newer one.
 
 On startup with persistence enabled the stored objects are compared with the
 current ones. Any difference is reported as an explicit diff with a
@@ -73,6 +76,14 @@ _RISKS = {
         "boundaries — with the same orphaned-vectors risk as a splitter "
         "config change. If unsure, re-index from scratch."
     ),
+    "chunk_id": (
+        "This serviette version derives chunk ids differently from the one "
+        "that built the persisted state. Rows already in the vector DB carry "
+        "the OLD ids; when such a document is later deleted or modified, the "
+        "retraction is computed with the NEW scheme, misses them, and they "
+        "stay behind as orphans. Re-index from scratch (drop the vector "
+        "collection and the persistence directory)."
+    ),
 }
 
 
@@ -127,7 +138,7 @@ def _embedder_identity(config: ServietteConfig) -> dict[str, Any]:
 
 
 def build_fingerprint(config: ServietteConfig) -> dict[str, Any]:
-    from serviette.indexer.graph import ParserRegistry
+    from serviette.indexer.graph import CHUNK_ID_SCHEME, ParserRegistry
 
     return {
         "splitter": config.splitter.model_dump(),
@@ -137,6 +148,7 @@ def build_fingerprint(config: ServietteConfig) -> dict[str, Any]:
             name: _library_version(name)
             for name in ("pathway", "tiktoken", "langchain_text_splitters")
         },
+        "chunk_id": {"scheme": CHUNK_ID_SCHEME},
     }
 
 
