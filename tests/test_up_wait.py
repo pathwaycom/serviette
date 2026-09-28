@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from serviette.config.schema import ServietteConfig
-from serviette.up import _server_url, _wait_for_index, _wait_for_server
+from serviette.up import _probe_host, _server_url, _wait_for_index, _wait_for_server
 
 
 class FakeProc:
@@ -99,6 +99,24 @@ def test_server_url_maps_wildcard_binds_to_localhost():
     assert _server_url(_config("0.0.0.0", 8989)) == "http://localhost:8989"
     assert _server_url(_config("127.0.0.1", 8989)) == "http://localhost:8989"
     assert _server_url(_config("192.168.1.5", 9000)) == "http://192.168.1.5:9000"
+
+
+@pytest.mark.parametrize(
+    ("bind", "probe"),
+    [
+        ("0.0.0.0", "127.0.0.1"),
+        ("", "127.0.0.1"),
+        ("::", "[::1]"),
+        ("127.0.0.1", "127.0.0.1"),
+        # A specific address or hostname is reachable only as itself: probing
+        # loopback for it never answers and up used to wait forever.
+        ("192.168.1.5", "192.168.1.5"),
+        ("rag.internal", "rag.internal"),
+        ("fe80::1", "[fe80::1]"),
+    ],
+)
+def test_readiness_probe_follows_the_bind_address(bind, probe):
+    assert _probe_host(bind) == probe
 
 
 def test_index_wait_stops_on_shutdown_request(monkeypatch):

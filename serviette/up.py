@@ -222,19 +222,35 @@ def _server_url(config: ServietteConfig) -> str:
     return f"http://{host}:{config.server.port}"
 
 
-def _server_ready(config: ServietteConfig) -> bool:
-    """True once the server answers ``/api/v1/health``.
+def _probe_host(host: str) -> str:
+    """The address ``up`` probes for the configured bind address.
 
-    Probed over loopback: ``up`` and the server share a host, and a bind on
-    0.0.0.0 / :: is reachable there too.
+    A wildcard bind (0.0.0.0 / ::) is not connectable as written but listens
+    on loopback; a specific address or hostname is reachable only as itself
+    — probing loopback for it (as ``up`` used to) never succeeds. An IPv6
+    literal must be bracketed in a URL.
     """
+
+    if host in ("", "0.0.0.0"):
+        return "127.0.0.1"
+    if host == "::":
+        return "[::1]"
+    if ":" in host:
+        return f"[{host}]"
+    return host
+
+
+def _server_ready(config: ServietteConfig) -> bool:
+    """True once the server answers ``/api/v1/health`` on its bind address."""
 
     import httpx
 
+    url = (
+        f"http://{_probe_host(config.server.host)}:{config.server.port}"
+        "/api/v1/health"
+    )
     try:
-        response = httpx.get(
-            f"http://127.0.0.1:{config.server.port}/api/v1/health", timeout=2.0
-        )
+        response = httpx.get(url, timeout=2.0)
     except httpx.HTTPError:
         return False
     return response.status_code == 200
