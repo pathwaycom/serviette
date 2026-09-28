@@ -169,6 +169,37 @@ def test_decompose_falls_back_on_empty_llm_reply(store_path, mock_server_embedde
     assert resp.json()["results"][0]["text"] == DOCS[0]
 
 
+class _RawLLM:
+    def __init__(self, reply: str):
+        self._reply = reply
+
+    async def raw(self, prompt):
+        return self._reply
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        # List markers the model may prepend despite the prompt are removed...
+        ("1. who wrote it\n2) when was it published", ["who wrote it", "when was it published"]),
+        ("- who wrote it\n* when was it published", ["who wrote it", "when was it published"]),
+        # ...but a leading number that is part of the query stays: it used to be
+        # stripped along with the numbering ("1984 novel author" -> "novel author").
+        ("1984 novel author", ["1984 novel author"]),
+        ("1. 1984 novel author", ["1984 novel author"]),
+        ("2 Samuel chapter summary", ["2 Samuel chapter summary"]),
+        ("1984. Who wrote it", ["1984. Who wrote it"]),
+    ],
+)
+def test_decompose_keeps_numbers_that_belong_to_the_query(reply, expected):
+    import asyncio
+
+    from serviette.server.decompose import decompose_query
+
+    result = asyncio.run(decompose_query(_RawLLM(reply), "original question", 4))
+    assert result == ["original question", *expected]
+
+
 # ---------------------------------------------------------------------------
 # MMR
 # ---------------------------------------------------------------------------

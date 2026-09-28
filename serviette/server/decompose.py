@@ -10,6 +10,7 @@ mode single-query retrieval hits on multi-hop benchmarks like FRAMES.
 from __future__ import annotations
 
 import logging
+import re
 
 from serviette.server.llm import AsyncLLM
 
@@ -23,6 +24,12 @@ only one fact, output the question itself as the single query. Output only \
 the queries, no numbering and no commentary.
 
 Question: {query}"""
+
+# A list marker the model may still prepend despite the prompt ("1. ", "12) ",
+# "- ", "* "). After digits a dot or bracket is required, so a query that
+# merely starts with a number ("1984 novel author") keeps it — that number is
+# usually the very fact the retrieval needs.
+_LIST_MARKER = re.compile(r"^\s*(?:[-*\u2022]|\d{1,3}[.)])\s+")
 
 
 async def decompose_query(
@@ -44,7 +51,7 @@ async def decompose_query(
         return [query]
     subqueries = []
     for line in reply.splitlines():
-        cleaned = line.strip().strip("-*").lstrip("0123456789.) ").strip()
+        cleaned = _LIST_MARKER.sub("", line, count=1).strip()
         if cleaned and cleaned.lower() != query.strip().lower():
             subqueries.append(cleaned)
     return [query] + subqueries[:max_subqueries]
