@@ -231,7 +231,7 @@ def test_fingerprint_is_confirmed_by_up_before_the_indexer_starts(tmp_path, monk
             "sources": [{"type": "fs", "path": str(tmp_path), "mode": "static"}],
             "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
             "embedder": {"type": "mock"},
-            "persistence": {"path": str(tmp_path / "persist")},
+            "workdir_path": str(tmp_path / "workdir"),
         }
     )
     assert up.run(config, "config.yaml") == 0
@@ -261,3 +261,36 @@ def test_up_refuses_when_the_fingerprint_is_declined(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="Refusing to start"):
         up.run(config, "config.yaml")
     assert spawned == []  # nothing started
+
+
+def test_server_probe_ignores_the_environment_proxy(monkeypatch):
+    """A corporate http_proxy must not swallow the loopback health probe:
+    the proxy refuses 127.0.0.1, and ``up`` would wait for a server that
+    is already up."""
+    import http.server
+    import socketserver
+    import threading
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+
+        def log_message(self, *_):
+            pass
+
+    with socketserver.TCPServer(("127.0.0.1", 0), Health) as httpd:
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            config = _config()
+            config.server.port = httpd.server_address[1]
+            # A proxy that accepts nothing: without trust_env=False the probe
+            # would be sent there and fail.
+            monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+            monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+            monkeypatch.delenv("no_proxy", raising=False)
+            monkeypatch.delenv("NO_PROXY", raising=False)
+            assert up._server_ready(config) is True
+        finally:
+            httpd.shutdown()

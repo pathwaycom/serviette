@@ -27,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PASS_TIMEOUT = 180
 
 
-def _write_config(tmp_path, docs_dir, store, persist_dir, *, persistence: bool) -> Path:
+def _write_config(tmp_path, docs_dir, store, workdir, *, persistence: bool) -> Path:
     config = {
         "sources": [
             {"type": "fs", "path": str(docs_dir), "glob": "**/*", "mode": "static"}
@@ -35,11 +35,8 @@ def _write_config(tmp_path, docs_dir, store, persist_dir, *, persistence: bool) 
         "vector_db": {"type": "duckdb", "path": str(store), "table": "serviette_embeddings"},
         "embedder": {"type": "mock"},
         "splitter": {"type": "token_count", "chunk_size": 512, "chunk_overlap": 50},
-        "persistence": {
-            "enabled": persistence,
-            "backend": "filesystem",
-            "path": str(persist_dir),
-        },
+        "workdir_path": str(workdir),
+        "persistence": {"enabled": persistence, "backend": "filesystem"},
     }
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(yaml.safe_dump(config))
@@ -89,7 +86,7 @@ def env(tmp_path):
         "tmp": tmp_path,
         "docs": docs,
         "store": tmp_path / "store.duckdb",
-        "persist": tmp_path / "persist",
+        "workdir": tmp_path / "workdir",
         "cache": tmp_path / "cache",
     }
 
@@ -97,7 +94,7 @@ def env(tmp_path):
 def test_add_modify_delete(env):
     docs, store = env["docs"], env["store"]
     cfg = _write_config(
-        env["tmp"], docs, store, env["persist"], persistence=True
+        env["tmp"], docs, store, env["workdir"], persistence=True
     )
 
     # Pass 1: index two files -> vectors for both appear.
@@ -127,7 +124,7 @@ def test_restart_without_persistence_is_idempotent(env):
     does not depend on the connector's observation time (``seen_at``)."""
 
     docs, store = env["docs"], env["store"]
-    cfg = _write_config(env["tmp"], docs, store, env["persist"], persistence=False)
+    cfg = _write_config(env["tmp"], docs, store, env["workdir"], persistence=False)
     (docs / "a.txt").write_text("alpha document about cats and the streaming engine")
     (docs / "b.txt").write_text("beta report concerning dogs and live data framework")
 
@@ -159,7 +156,7 @@ def test_persistence_on_and_off_give_same_vectors(tmp_path):
         (docs / "a.txt").write_text("alpha document about cats")
         (docs / "b.txt").write_text("beta report about dogs and frameworks")
         store = root / "store.duckdb"
-        cfg = _write_config(root, docs, store, root / "persist", persistence=persistence)
+        cfg = _write_config(root, docs, store, root / "workdir", persistence=persistence)
         _run_pass(cfg, root / "cache")
         return {(r["text"], r["metadata"]["path"].split("/")[-1]) for r in _read_store(store)}
 
@@ -192,6 +189,7 @@ def test_monitoring_endpoints_serve_prometheus(tmp_path, tcp_port):
         },
         "embedder": {"type": "mock"},
         "indexer": {"monitoring_http_port": tcp_port},
+        "workdir_path": str(tmp_path / "workdir"),
         "persistence": {"enabled": False},
     }
     cfg_path = tmp_path / "config.yaml"
@@ -266,6 +264,7 @@ def test_pyfilesystem_source_end_to_end(tmp_path):
             "table": "embeddings",
         },
         "embedder": {"type": "mock"},
+        "workdir_path": str(tmp_path / "workdir"),
         "persistence": {"enabled": False},
     }
     cfg_path = tmp_path / "config.yaml"
@@ -286,7 +285,7 @@ def test_unreadable_file_indexes_empty_and_recovers_on_touch(env):
     once readable, touching the file re-emits it and it lands."""
 
     docs, store = env["docs"], env["store"]
-    cfg = _write_config(env["tmp"], docs, store, env["persist"], persistence=True)
+    cfg = _write_config(env["tmp"], docs, store, env["workdir"], persistence=True)
     # Fail fast in the test: no backoff sleeps.
     config = yaml.safe_load(cfg.read_text())
     config["indexer"] = {"fetch_retries": 0}

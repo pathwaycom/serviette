@@ -9,9 +9,9 @@ deletion time, its old chunk ids would not match, and the vector DB would
 keep orphaned rows.
 
 To catch that, the indexer stores the full risk-relevant objects (not just a
-hash) in ``<persistence dir>/serviette-fingerprint.json`` (next to the engine's
-own ``PStorage`` subdirectory, never inside it — the engine logs an ERROR for
-every foreign entry in its directory):
+hash) in ``<workdir>/serviette-fingerprint.json`` (at the top level of the
+working directory, never inside the engine's ``persistence/`` subdirectory —
+the engine logs an ERROR for every foreign entry in its directory):
 
 - the splitter config,
 - the embedder identity: type, model, ``document_prefix`` and every extra
@@ -24,10 +24,12 @@ every foreign entry in its directory):
   deterministic UDF too, so rows written under an older scheme cannot be
   retracted by a newer one.
 
-On startup with persistence enabled the stored objects are compared with the
-current ones. Any difference is reported as an explicit diff with a
-human-readable explanation of the risk, and the indexer refuses to start
-unless the user confirms — interactively on a TTY, or via
+On startup the stored objects are compared with the current ones. The check
+does not depend on persistence being enabled: without it a restart re-indexes
+every document, and rows written under the old settings (other chunk ids)
+stay in the vector DB just the same. Any difference is reported as an
+explicit diff with a human-readable explanation of the risk, and the indexer
+refuses to start unless the user confirms — interactively on a TTY, or via
 ``SERVIETTE_ACCEPT_FINGERPRINT_CHANGES=1`` in non-interactive deployments.
 Confirmation updates the stored fingerprint.
 """
@@ -183,11 +185,9 @@ def _confirm(diff_lines: list[str]) -> bool:
 
 
 def check_fingerprint(config: ServietteConfig) -> None:
-    """Verify (and maintain) the persisted fingerprint; may abort startup."""
+    """Verify (and maintain) the stored fingerprint; may abort startup."""
 
-    if not config.persistence.enabled:
-        return  # no persisted state to be inconsistent with
-    directory = config.persistence.data_path()
+    directory = config.workdir()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / _FILENAME
 
@@ -208,8 +208,8 @@ def check_fingerprint(config: ServietteConfig) -> None:
         return
 
     logger.critical(
-        "The indexing configuration differs from the one this persistence "
-        "directory (%s) was built with:\n%s",
+        "The indexing configuration differs from the one this working "
+        "directory (%s) was indexed with:\n%s",
         directory,
         "\n".join("  " + line for line in diff_lines),
     )
@@ -218,7 +218,8 @@ def check_fingerprint(config: ServietteConfig) -> None:
             "Refusing to start: the configuration change above can corrupt "
             "incremental updates of already-indexed documents. Either revert "
             "the change, re-index from scratch (drop the vector collection "
-            f"and {directory}), or set {_ACCEPT_ENV}=1 / confirm interactively "
+            f"and the working directory {directory}), or set {_ACCEPT_ENV}=1 / "
+            "confirm interactively "
             "to accept the risks."
         )
     path.write_text(json.dumps(current, indent=2, sort_keys=True))

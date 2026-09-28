@@ -108,9 +108,9 @@ def build_config(answers: dict[str, Any]) -> dict[str, Any]:
             "chunk_size": answers.get("chunk_size", 512),
             "chunk_overlap": answers.get("chunk_overlap", 50),
         }
-        # Persistence is a silent default (enabled, on disk, ./persistence):
-        # the section is not emitted and the wizard does not ask — advanced
-        # users tune it by adding a `persistence:` section to the config.
+        # The working directory (./serviette-workdir) and persistence (on)
+        # are silent defaults: neither is emitted and the wizard does not
+        # ask — advanced users set `workdir_path` / `persistence:` by hand.
 
     if needs_server:
         config["server"] = {
@@ -616,8 +616,8 @@ class Wizard:
                 answers["embedder_model"] = self.p.text("Embedder model (blank for default)", default="") or None
             answers["embedder_api_key"] = self.p.text("API key", default=env_ref)
 
-        # Splitter and persistence are not asked about: defaults are emitted
-        # into the YAML for the user to tune there.
+        # Splitter is not asked about: defaults are emitted into the YAML
+        # for the user to tune there; workdir/persistence stay implicit.
 
         if needs_server:
             # Host/port are silent defaults (127.0.0.1:8989 — loopback + uncommon port, no

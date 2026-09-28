@@ -30,10 +30,10 @@ splitter:
 indexer:
   workers: 8
   spawn_first_port: 12000
+workdir_path: ${FRAMES_DATA}/workdir-e5small-full
 persistence:
   enabled: true
   backend: filesystem
-  path: ${FRAMES_DATA}/persist-e5small-full
 server:
   port: 8987
   serve_frontend: false

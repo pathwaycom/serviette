@@ -45,6 +45,7 @@ def test_up_serves_after_static_indexing(tmp_path, tcp_port):
         "sources": [{"type": "fs", "path": str(docs), "glob": "**/*", "mode": "static"}],
         "vector_db": {"type": "duckdb", "path": str(tmp_path / "store.duckdb")},
         "embedder": {"type": "mock"},
+        "workdir_path": str(tmp_path / "workdir"),
         "persistence": {"enabled": False},
         "server": {"host": "127.0.0.1", "port": tcp_port},
     }
@@ -224,6 +225,7 @@ def test_up_empty_folder_starts_and_indexes_live(tmp_path, tcp_port):
         },
         "embedder": {"type": "mock"},
         "server": {"host": "127.0.0.1", "port": tcp_port},
+        "workdir_path": str(tmp_path / "workdir"),
         "persistence": {"enabled": False},
     }
     cfg = tmp_path / "config.yaml"

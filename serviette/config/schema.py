@@ -584,7 +584,7 @@ class IndexerConfig(BaseModel):
     # limits, connection resets — so 0 is only for tests.
     fetch_retries: int = Field(default=3, ge=0)
     # Advanced. Disk budget for the parse cache (pw.udfs.DefaultCache, stored
-    # under <persistence dir>/PStorage/runtime_calls, LRU-evicted). Size it at least to
+    # under <workdir>/persistence/runtime_calls, LRU-evicted). Size it at least to
     # the extracted-text volume of the corpus to avoid re-parse churn.
     parse_cache_size_gb: int = Field(default=8, ge=1)
     # Advanced. If set, the engine keeps the memoization cache of
@@ -610,34 +610,28 @@ class PersistenceConfig(BaseModel):
     Carries three things: incremental state across restarts (no re-embedding
     of unchanged documents), correct retraction of files deleted while the
     indexer was down, and the parse cache (``runtime_calls``). Advanced users
-    tune or disable it by editing the config directly; disabling also
-    disables the parse cache.
+    disable it by editing the config directly; disabling also disables the
+    parse cache.
 
-    Layout: ``path`` is serviette's data directory. serviette's own artifacts
-    (the configuration fingerprint) live at its top level; the Pathway engine
-    gets the ``PStorage`` subdirectory (:meth:`engine_path`) to itself. The
-    engine treats every entry of its directory as persisted state and logs an
-    ERROR for anything it did not write, so the two must not share a folder.
+    The state lives in the ``persistence`` subdirectory of the working
+    directory (``workdir_path``, see :meth:`ServietteConfig.persistence_dir`);
+    there is no separate path to configure.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    ENGINE_SUBDIR: ClassVar[str] = "PStorage"
-
     enabled: bool = True
     backend: Literal["filesystem"] = "filesystem"
-    # Relative to the indexer's working directory; writable out of the box.
-    path: str = "./persistence"
 
-    def data_path(self) -> Path:
-        """serviette's data directory (fingerprint and other own artifacts)."""
-
-        return Path(self.path)
-
-    def engine_path(self) -> Path:
-        """The directory handed to the Pathway persistence backend."""
-
-        return self.data_path() / self.ENGINE_SUBDIR
+    @model_validator(mode="before")
+    @classmethod
+    def _no_path_here(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "path" in data:
+            raise ValueError(
+                "persistence.path is not a setting: the persistence state lives "
+                "in the working directory — set the top-level workdir_path instead."
+            )
+        return data
 
 
 class ServerConfig(BaseModel):
@@ -722,6 +716,13 @@ class ServietteConfig(BaseModel):
     parser: list[ParserRule] | None = None
     indexer: IndexerConfig = Field(default_factory=IndexerConfig)
 
+    # serviette's working directory: everything it keeps on disk between
+    # runs goes under here, each concern in its own subdirectory — the
+    # Pathway persistence state (``persistence/``, together with the parse
+    # cache), and the configuration fingerprint at the top level. Relative
+    # paths resolve against the process's working directory, like every other
+    # path in the config. Silent default — the wizard does not ask.
+    workdir_path: str = "./serviette-workdir"
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     up: UpConfig = Field(default_factory=UpConfig)
@@ -729,6 +730,23 @@ class ServietteConfig(BaseModel):
     reranker: RerankerConfig | None = None
     rag: RagConfig | None = None
     frontend: FrontendConfig | None = None
+
+    # -- working directory layout ---------------------------------------------
+
+    PERSISTENCE_SUBDIR: ClassVar[str] = "persistence"
+
+    def workdir(self) -> Path:
+        return Path(self.workdir_path)
+
+    def persistence_dir(self) -> Path:
+        """The directory handed to the Pathway persistence backend.
+
+        A subdirectory of its own because the engine treats every entry of the
+        directory it is given as persisted state and logs an ERROR for
+        anything it did not write.
+        """
+
+        return self.workdir() / self.PERSISTENCE_SUBDIR
 
     # -- per-component requirements -------------------------------------------
 

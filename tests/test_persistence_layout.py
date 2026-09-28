@@ -1,75 +1,83 @@
-"""Layout of ``persistence.path``: serviette's artifacts at the top level, the
-Pathway engine confined to the ``PStorage`` subdirectory (the engine logs an
-ERROR for every foreign entry in the directory it is given), and in-place
-migration of the pre-``PStorage`` layout."""
+"""Layout of the working directory (``workdir_path``): serviette's own
+artifacts at the top level, the Pathway engine confined to the
+``persistence`` subdirectory (the engine logs an ERROR for every foreign
+entry in the directory it is given), and nothing else touched."""
 
 from __future__ import annotations
 
-import json
+import pytest
 
 from serviette.config.schema import load_config_dict
 from serviette.indexer.fingerprint import FINGERPRINT_FILENAME, check_fingerprint
 from serviette.indexer.graph import prepare_persistence_dir
 
 
-def _config(tmp_path):
+def _config(tmp_path, **extra):
     return load_config_dict(
         {
             "sources": [{"type": "fs", "path": "/data"}],
             "vector_db": {"type": "duckdb", "path": str(tmp_path / "x.duckdb")},
             "embedder": {"type": "mock"},
-            "persistence": {"enabled": True, "path": str(tmp_path / "persist")},
+            "workdir_path": str(tmp_path / "workdir"),
+            **extra,
         }
     )
 
 
-def test_engine_dir_is_a_subdirectory_of_the_data_dir(tmp_path):
+def test_engine_dir_is_a_subdirectory_of_the_workdir(tmp_path):
     config = _config(tmp_path)
     engine_dir = prepare_persistence_dir(config)
-    assert engine_dir == tmp_path / "persist" / "PStorage"
+    assert engine_dir == tmp_path / "workdir" / "persistence"
     assert engine_dir.is_dir()
-    assert config.persistence.engine_path() == engine_dir
+    assert config.persistence_dir() == engine_dir
 
 
 def test_fingerprint_stays_out_of_the_engine_dir(tmp_path):
     config = _config(tmp_path)
     check_fingerprint(config)
     engine_dir = prepare_persistence_dir(config)
-    assert (tmp_path / "persist" / FINGERPRINT_FILENAME).is_file()
+    assert (tmp_path / "workdir" / FINGERPRINT_FILENAME).is_file()
     assert list(engine_dir.iterdir()) == []
 
 
-def test_legacy_layout_is_migrated_in_place(tmp_path, caplog):
-    """A directory written by serviette <= 0.1.2 (engine state at the top
-    level) moves into ``PStorage`` so the incremental state survives the
-    upgrade; the fingerprint stays where it is."""
+def test_foreign_files_in_the_workdir_are_left_alone(tmp_path):
+    """Whatever else the user keeps in the working directory (a DuckDB store,
+    a config, notes) is not serviette's to move — in particular never into
+    the engine's directory, where it would be reported as corrupt state."""
 
-    data_dir = tmp_path / "persist"
-    (data_dir / "streams" / "1").mkdir(parents=True)
-    (data_dir / "streams" / "1" / "chunk").write_bytes(b"state")
-    (data_dir / "runtime_calls").mkdir()
-    (data_dir / "1-0-0").write_bytes(b"snapshot")
-    (data_dir / FINGERPRINT_FILENAME).write_text(json.dumps({"splitter": {}}))
-
-    engine_dir = prepare_persistence_dir(_config(tmp_path))
-
-    assert (engine_dir / "streams" / "1" / "chunk").read_bytes() == b"state"
-    assert (engine_dir / "runtime_calls").is_dir()
-    assert (engine_dir / "1-0-0").read_bytes() == b"snapshot"
-    assert (data_dir / FINGERPRINT_FILENAME).is_file()
-    assert not (engine_dir / FINGERPRINT_FILENAME).exists()
-    assert {p.name for p in data_dir.iterdir()} == {FINGERPRINT_FILENAME, "PStorage"}
-    assert "Moved the Pathway persistence state" in caplog.text
-
-
-def test_migration_runs_once(tmp_path):
-    data_dir = tmp_path / "persist"
-    (data_dir / "streams").mkdir(parents=True)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "store.duckdb").write_bytes(b"vectors")
+    (workdir / "config.yaml").write_text("x: 1")
     config = _config(tmp_path)
-    prepare_persistence_dir(config)
-    # A later top-level stray (e.g. a user's note) must not be swept into
-    # PStorage once the layout exists.
-    (data_dir / "notes.txt").write_text("mine")
-    prepare_persistence_dir(config)
-    assert (data_dir / "notes.txt").is_file()
-    assert not (data_dir / "PStorage" / "notes.txt").exists()
+    check_fingerprint(config)
+    engine_dir = prepare_persistence_dir(config)
+    assert (workdir / "store.duckdb").read_bytes() == b"vectors"
+    assert (workdir / "config.yaml").is_file()
+    assert list(engine_dir.iterdir()) == []
+    assert {p.name for p in workdir.iterdir()} == {
+        "store.duckdb",
+        "config.yaml",
+        FINGERPRINT_FILENAME,
+        "persistence",
+    }
+
+
+def test_default_workdir_is_relative_to_cwd(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = load_config_dict(
+        {
+            "sources": [{"type": "fs", "path": "/data"}],
+            "vector_db": {"type": "duckdb", "path": "x.duckdb"},
+            "embedder": {"type": "mock"},
+        }
+    )
+    assert config.workdir_path == "./serviette-workdir"
+    assert prepare_persistence_dir(config).resolve() == (
+        tmp_path / "serviette-workdir" / "persistence"
+    ).resolve()
+
+
+def test_persistence_path_is_rejected_with_a_pointer_to_workdir(tmp_path):
+    with pytest.raises(ValueError, match="workdir_path"):
+        _config(tmp_path, persistence={"enabled": True, "path": "/elsewhere"})

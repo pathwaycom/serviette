@@ -223,8 +223,11 @@ benchmarks/*/results/
 benchmarks/*/compat/*.so
 
 # Runtime working directory of `serviette demo` (regenerable: corpus copy,
-# generated config, DuckDB store, persistence)
+# generated config, DuckDB store, workdir)
 serviette-demo/
+
+# Default `workdir_path` (persistence state, fingerprint)
+serviette-workdir/
 
 # Internal planning document — kept local, never committed (purged from
 # history on 2026-07-09).

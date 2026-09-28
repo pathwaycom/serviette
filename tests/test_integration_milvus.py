@@ -42,11 +42,8 @@ def _config(tmp_path: Path, docs: Path, uri: str) -> dict:
         "vector_db": {"type": "milvus", "uri": uri, "collection": COLLECTION},
         "embedder": {"type": "mock"},
         "splitter": {"type": "token_count", "chunk_size": 512, "chunk_overlap": 50},
-        "persistence": {
-            "enabled": True,
-            "backend": "filesystem",
-            "path": str(tmp_path / "persist"),
-        },
+        "workdir_path": str(tmp_path / "workdir"),
+        "persistence": {"enabled": True, "backend": "filesystem"},
     }
 
 

@@ -149,6 +149,22 @@ def test_adaptive_rag_gives_up_after_max_iterations(store_path, mock_server_embe
     assert llm.context_sizes == [1, 2]
 
 
+def test_adaptive_rag_stops_when_the_corpus_is_exhausted(store_path, mock_server_embedder):
+    """Once retrieval returns fewer chunks than asked, a larger k cannot add
+    context: the loop must stop rather than send the identical prompt again
+    until max_iterations."""
+    llm = _AdaptiveLLM(need=100)
+    rag = RagConfig(adaptive={"factor": 2, "max_iterations": 4})
+    app = _app(store_path, mock_server_embedder, llm=llm, rag=rag)
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/rag", json={"query": "who?", "k": 3})
+    assert resp.status_code == 200
+    assert "No information found" in resp.json()["answer"]
+    # k=3 -> 3 chunks (full ask, grow) -> k=6 -> 5 chunks (short: stop).
+    assert llm.context_sizes == [3, 5]
+    assert len(resp.json()["sources"]) == 5
+
+
 def test_non_adaptive_rag_uses_default_prompt(store_path, mock_server_embedder):
     llm = _AdaptiveLLM(need=1)
     app = _app(store_path, mock_server_embedder, llm=llm)
@@ -186,6 +202,29 @@ def test_decompose_retrieves_for_every_subquery(store_path, mock_server_embedder
     # one document; fusion must surface all three despite k=3.
     assert set(texts) == {DOCS[0], DOCS[1], DOCS[2]}
     assert len(llm.raw_prompts) == 1 and DOCS[0] in llm.raw_prompts[0]
+
+
+def test_adaptive_rag_decomposes_once(store_path, mock_server_embedder):
+    """The adaptive loop re-searches with a growing k; the decomposition
+    (an LLM call with the same input every time) must happen once per
+    request, not once per iteration."""
+
+    class _DecomposingAdaptiveLLM(_DecomposingLLM):
+        def __init__(self, subqueries, need):
+            super().__init__(subqueries)
+            self.need = need
+
+    llm = _DecomposingAdaptiveLLM([DOCS[1], DOCS[2]], need=4)
+    rag = RagConfig(
+        decompose={"max_subqueries": 4}, adaptive={"factor": 2, "max_iterations": 4}
+    )
+    app = _app(store_path, mock_server_embedder, llm=llm, rag=rag)
+    with TestClient(app) as client:
+        resp = client.post("/api/v1/rag", json={"query": DOCS[0], "k": 1})
+    assert resp.status_code == 200
+    assert resp.json()["answer"] == "Real answer from 4 chunks."
+    assert llm.context_sizes == [1, 2, 4]
+    assert len(llm.raw_prompts) == 1
 
 
 def test_decompose_requires_llm(store_path, mock_server_embedder):

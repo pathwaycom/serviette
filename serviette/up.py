@@ -272,7 +272,10 @@ def _server_ready(config: ServietteConfig) -> bool:
         "/api/v1/health"
     )
     try:
-        response = httpx.get(url, timeout=2.0)
+        # trust_env=False: a loopback probe must never go through the
+        # http_proxy / HTTPS_PROXY of the environment — corporate proxies
+        # refuse 127.0.0.1 and the wait below would never end.
+        response = httpx.get(url, timeout=2.0, trust_env=False)
     except httpx.HTTPError:
         return False
     return response.status_code == 200

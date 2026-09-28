@@ -129,8 +129,8 @@ def test_demo_key_change_keeps_local_index(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     prepare_demo_dir(tmp_path, port=1, license_key="K")  # local embedder
     (tmp_path / "embeddings.duckdb").write_bytes(b"old vectors")
-    (tmp_path / "persistence").mkdir()
-    (tmp_path / "persistence" / "snap").write_text("x")
+    (tmp_path / "workdir" / "persistence").mkdir(parents=True)
+    (tmp_path / "workdir" / "persistence" / "snap").write_text("x")
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-real")
     cfg = prepare_demo_dir(tmp_path, port=1, license_key="K")

@@ -24,7 +24,7 @@ Parse caching
 -------------
 Cross-restart parse caching is delegated entirely to Pathway:
 ``pw.udfs.DefaultCache`` stores results on disk (diskcache, LRU-bounded) under
-``<persistence dir>/PStorage/runtime_calls`` whenever persistence is enabled — which is
+``<workdir>/persistence/runtime_calls`` whenever persistence is enabled — which is
 the default. No caching machinery lives in serviette; disabling persistence also
 disables the parse cache (every restart re-fetches and re-parses).
 
@@ -227,9 +227,19 @@ class ParserRegistry:
     }
 
     def check_rule_deps(self) -> None:
-        """Validate that every explicit rule's parser can actually be built."""
+        """Validate that every explicit rule's parser can actually be built.
+
+        Two checks, both at startup so that a config mistake stops the
+        indexer with a plain message instead of failing inside the parse UDF
+        on the first matching file: the parser's package is installed, and
+        its constructor accepts the rule's options (a mistyped option name or
+        a value of the wrong type raises here). The built parser stays in the
+        registry's cache, so the first file pays nothing extra.
+        """
 
         for rule in self._rules:
+            if rule.type == "skip":
+                continue
             dep = self._KIND_DEPS.get(rule.type)
             if dep and not self._importable(dep[0]):
                 module, hint = dep
@@ -237,6 +247,13 @@ class ParserRegistry:
                     f"parser rule {rule.match} -> {rule.type!r} needs the "
                     f"{module!r} package, which is not installed — {hint}"
                 )
+            try:
+                self._get(rule.type, dict(rule.options))
+            except Exception as exc:  # any constructor failure is a config error here
+                raise ValueError(
+                    f"parser rule {rule.match} -> {rule.type!r}: cannot build the "
+                    f"parser with options {sorted(rule.options)}: {exc}"
+                ) from exc
 
     def resolved_rules(self) -> list[dict]:
         """Full routing picture (user rules + resolved defaults) for the
@@ -281,7 +298,10 @@ class ParserRegistry:
         return self._default_for(self._modality_for(suffix))
 
     def _get(self, kind: str, options: dict):
-        key = (kind, tuple(sorted(options.items())))
+        # Serialized, not tupled: option values may be dicts or lists (docling's
+        # ``pdf_pipeline_options``, unstructured's ``partition_kwargs``), which
+        # are not hashable.
+        key = (kind, json.dumps(options, sort_keys=True, default=repr))
         if key not in self._instances:
             from pathway.xpacks.llm import parsers
 
@@ -312,11 +332,13 @@ class ParserRegistry:
         options.pop("reason", None)
         try:
             parser = self._get(kind, options)
-        except ImportError as exc:
+        except Exception as exc:  # noqa: BLE001 - one file must never kill the pipeline
             # Routing guards make this unreachable for the defaults, and
-            # check_rule_deps() for explicit rules — this net catches lazy
-            # imports inside the xpack parsers themselves. One file must
-            # never kill the pipeline.
+            # check_rule_deps() for explicit rules — this net catches what
+            # those cannot: lazy imports inside the xpack parsers, a default
+            # parser whose constructor fails in this environment (a missing
+            # model download, an unreachable API). Skip the format with one
+            # warning per reason instead of crashing the pipeline.
             reason = f"parser {kind!r} unavailable: {exc}"
             if reason not in self._warned:
                 self._warned.add(reason)
@@ -908,40 +930,14 @@ def _libpq_settings(connection_string: str) -> dict[str, Any]:
 def prepare_persistence_dir(config: ServietteConfig) -> Path:
     """Create the engine's persistence directory and return it.
 
-    ``persistence.path`` is serviette's data directory: its top level holds
-    serviette's own artifacts (the fingerprint) and the engine gets the
-    ``PStorage`` subdirectory. The engine scans its directory and logs an
-    ERROR for every entry it did not write, which is why the two are apart.
-
-    Releases up to 0.1.2 handed the engine ``persistence.path`` itself. Such
-    a directory (no ``PStorage`` yet, engine entries at the top level) is
-    migrated in place — its entries move down into ``PStorage`` — so an
-    upgrade keeps the incremental state instead of re-indexing everything.
+    ``<workdir>/persistence`` belongs to the Pathway engine alone: it scans
+    its directory and logs an ERROR for every entry it did not write, so
+    serviette's own artifacts (the fingerprint) stay at the top level of the
+    working directory, never in here.
     """
 
-    from serviette.indexer.fingerprint import FINGERPRINT_FILENAME
-
-    persistence = config.persistence
-    data_dir = persistence.data_path()
-    engine_dir = persistence.engine_path()
-    if not engine_dir.exists():
-        # Own artifacts stay at the top level; everything else is engine state.
-        legacy = (
-            [entry for entry in data_dir.iterdir() if entry.name != FINGERPRINT_FILENAME]
-            if data_dir.is_dir()
-            else []
-        )
-        engine_dir.mkdir(parents=True, exist_ok=True)
-        if legacy:
-            for entry in legacy:
-                entry.rename(engine_dir / entry.name)
-            logger.warning(
-                "Moved the Pathway persistence state of an older serviette "
-                "layout from %s into %s (%d entries).",
-                data_dir,
-                engine_dir,
-                len(legacy),
-            )
+    engine_dir = config.persistence_dir()
+    engine_dir.mkdir(parents=True, exist_ok=True)
     return engine_dir
 
 

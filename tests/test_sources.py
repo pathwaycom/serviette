@@ -332,13 +332,17 @@ def test_parser_skip_produces_empty_text(monkeypatch, caplog):
     assert any("Skipping" in r.message for r in caplog.records)
 
 
-def test_parser_rule_with_missing_dep_fails_at_startup():
+def test_parser_rule_with_missing_dep_fails_at_startup(monkeypatch):
+    from pathway.xpacks.llm import parsers
+
     from serviette.config.schema import ParserRule
 
     reg = _registry([ParserRule(match=["*.pdf"], type="docling")], importable=set())
     with pytest.raises(ValueError, match=r"serviette\[docling\]"):
         reg.check_rule_deps()
-    # With the dependency present the same rule validates fine.
+    # With the dependency present the same rule validates fine (the parser is
+    # also built at startup now, so stand in for the real docling constructor).
+    monkeypatch.setattr(parsers, "DoclingParser", lambda **options: object())
     reg = _registry([ParserRule(match=["*.pdf"], type="docling")], importable={"docling"})
     reg.check_rule_deps()
 

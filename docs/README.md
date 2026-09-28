@@ -200,9 +200,9 @@ string, which would only surface later as a provider 401).
 | `splitter.chunk_overlap` | int | `50` | indexer | Overlap (used by `recursive`). |
 | `indexer.fetch_retries` | int | `3` | indexer | Retries (exponential backoff from 1s) of a document's byte fetch before it is given up on: indexed as empty and ERROR-logged. Remote sources fail transiently under bulk backfills. |
 | `indexer.workers` | int | `1` | indexer | Worker **processes** (sharded via `pathway spawn`). Raise for large backfills — each worker carries its own embedding stack (~1 GB with local embeddings); the benchmarks run with `8`. |
+| `workdir_path` | str | `./serviette-workdir` | indexer | serviette's working directory — everything it keeps between runs: the configuration fingerprint at its top level, the Pathway persistence state (and the parse cache, `runtime_calls/`) under `persistence/`. Relative to the process's working directory. Silent default — the wizard does not ask. |
 | `persistence.enabled` | bool | `true` | indexer | See [Persistence](#5-persistence). |
 | `persistence.backend` | `filesystem` | `filesystem` | indexer | Persistence backend. |
-| `persistence.path` | str | `./persistence` | indexer | serviette's data directory: the configuration fingerprint at its top level, the Pathway persistence state (and the parse cache, `runtime_calls/`) under `PStorage/`. Silent default — the wizard does not ask. |
 | `server.host` / `server.port` | str / int | `127.0.0.1` / `8989` | server | Bind address. Loopback by default; set `0.0.0.0` explicitly to listen on all interfaces (containers, remote access) — see [Security](#security--exposing-the-server). |
 | `server.serve_frontend` | bool | `true` | server | Serve the chat UI on `/` from the same port (API stays under `/api/v1`). |
 | `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. serviette's own UIs never need it. Prefer exact origins over `*`. |
@@ -367,13 +367,25 @@ the last run, so:
 - **documents removed while the indexer was down are correctly retracted** from
   the vector DB on the next run.
 
-The engine's state lives under `<persistence.path>/PStorage/` (the top level of
-`persistence.path` is reserved for serviette's own files, such as the
-configuration fingerprint); the same `PStorage/` also hosts the **parse cache**
-(`runtime_calls/`, via `pw.udfs.DefaultCache` — diskcache, LRU-bounded by
+The engine's state lives under `<workdir_path>/persistence/` (the top level of
+the working directory is reserved for serviette's own files, such as the
+configuration fingerprint — the engine logs an ERROR for every foreign entry
+in the directory it is given, so the two never share a folder); the same
+`persistence/` also hosts the **parse cache** (`runtime_calls/`, via
+`pw.udfs.DefaultCache` — diskcache, LRU-bounded by
 `indexer.parse_cache_size_gb`, default 8): extracted document text stays warm
 across restarts, so unchanged documents are neither re-downloaded nor
 re-parsed. Disabling persistence also disables the parse cache.
+
+The **configuration fingerprint** (`<workdir_path>/serviette-fingerprint.json`)
+records the chunking-relevant settings the working directory was indexed with
+(splitter, parser routing, embedder identity, library versions, chunk-id
+scheme). A change is reported as a diff on startup and the indexer refuses to
+run unless confirmed (interactively, or with
+`SERVIETTE_ACCEPT_FINGERPRINT_CHANGES=1`), because rows already in the vector
+DB keep their old chunk ids and would be left behind as orphans. The check
+runs with persistence on or off: a restart without persistence re-indexes
+everything, but does not remove those rows either.
 
 A document whose bytes cannot be fetched (after `indexer.fetch_retries`
 retries) or parsed does not stop the indexer: it is indexed as **empty** and

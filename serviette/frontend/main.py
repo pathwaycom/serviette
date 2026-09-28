@@ -56,7 +56,11 @@ def create_app(config: ServietteConfig, *, client: httpx.AsyncClient | None = No
     async def lifespan(_: FastAPI):
         nonlocal client
         if client is None:
-            client = httpx.AsyncClient(base_url=fe.api_url, timeout=120.0)
+            # trust_env=False: the API is a sibling service (same host or
+            # network); routing its calls through the environment's
+            # http_proxy turns a working setup into "Could not reach the
+            # API" wherever a corporate proxy is configured.
+            client = httpx.AsyncClient(base_url=fe.api_url, timeout=120.0, trust_env=False)
         try:
             yield
         finally:

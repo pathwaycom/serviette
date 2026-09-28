@@ -260,21 +260,34 @@ def create_app(
     query_prefix = config.embedder.query_prefix
     rerank_candidates = config.reranker.candidates if config.reranker else 0
 
-    async def _search(query: str, k: int) -> list[dict[str, Any]]:
+    async def _queries(query: str) -> list[str]:
+        """The retrieval queries for ``query``: itself, plus its LLM
+        sub-queries when ``rag.decompose`` is on. Computed once per request —
+        the adaptive loop re-searches with a growing ``k`` and must not pay
+        (or re-roll) the decomposition on every round."""
+
+        if decompose is None:
+            return [query]
+        assert llm is not None  # validated at startup when decompose is set
+        return await decompose_query(llm, query, decompose.max_subqueries)
+
+    async def _search(
+        query: str, k: int, queries: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Retrieval pipeline: (decompose) → fetch pool → (rerank) → (MMR) → top-k.
 
         Each optional stage is driven by its config section; with none of
         them configured this reduces to the plain embed-and-retrieve path.
+        ``queries`` lets a caller that searches repeatedly (adaptive RAG)
+        pass the decomposition it already obtained.
         """
 
         # A reranker or MMR selects k out of a wider candidate pool.
         pool = max(k, rerank_candidates, mmr.candidates if mmr else 0)
         need_embeddings = mmr is not None
 
-        queries = [query]
-        if decompose is not None:
-            assert llm is not None  # validated at startup when decompose is set
-            queries = await decompose_query(llm, query, decompose.max_subqueries)
+        if queries is None:
+            queries = await _queries(query)
 
         async def fetch(q: str) -> list[dict[str, Any]]:
             embedding = await embedder.embed(query_prefix + q)
@@ -331,14 +344,21 @@ def create_app(
             f'to answer, reply exactly "{adaptive.no_answer_string}".'
         )
         k = req.k
-        for iteration in range(adaptive.max_iterations):
-            hits = await _search(req.query, k)
+        queries = await _queries(req.query)
+        for _iteration in range(adaptive.max_iterations):
+            hits = await _search(req.query, k, queries)
             answer = await llm.complete(
                 req.query,
                 [h["text"] for h in hits],
                 system_prompt=system_prompt,
             )
             if adaptive.no_answer_string not in answer:
+                break
+            if len(hits) < k:
+                # Retrieval returned less than asked: the corpus (or the
+                # candidate pool) is exhausted, so a larger k would hand the
+                # LLM the very same context again. Stop instead of repeating
+                # the identical call until max_iterations.
                 break
             k *= adaptive.factor
         return RagResponse(

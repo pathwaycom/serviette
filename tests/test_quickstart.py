@@ -137,6 +137,7 @@ def test_defaults_have_no_brand_name():
     assert config["vector_db"]["table"] == "embeddings"
     # Persistence is a silent schema default now — not emitted by the wizard.
     assert "persistence" not in config
+    assert "workdir_path" not in config
 
 
 def _feed(tokens):

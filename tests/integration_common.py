@@ -40,11 +40,8 @@ def write_config(tmp_path: Path, docs: Path, vector_db: dict[str, Any]) -> Path:
         "vector_db": vector_db,
         "embedder": {"type": "mock"},
         "splitter": {"type": "token_count", "chunk_size": 512, "chunk_overlap": 50},
-        "persistence": {
-            "enabled": True,
-            "backend": "filesystem",
-            "path": str(tmp_path / "persist"),
-        },
+        "workdir_path": str(tmp_path / "workdir"),
+        "persistence": {"enabled": True, "backend": "filesystem"},
     }
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(config))

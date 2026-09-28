@@ -105,11 +105,8 @@ def build_demo_config(
             "path": str(demo_dir / "embeddings.duckdb"),
             "table": "demo_embeddings",
         },
-        "persistence": {
-            "enabled": True,
-            "backend": "filesystem",
-            "path": str(demo_dir / "persistence"),
-        },
+        "workdir_path": str(demo_dir / "workdir"),
+        "persistence": {"enabled": True, "backend": "filesystem"},
         "server": {"host": "127.0.0.1", "port": port},
     }
     if embedder == "sentence_transformer":
@@ -167,7 +164,7 @@ def _reset_index_if_embedder_changed(demo_dir: Path, embedder: str) -> None:
         embedder,
     )
     (demo_dir / "embeddings.duckdb").unlink(missing_ok=True)
-    shutil.rmtree(demo_dir / "persistence", ignore_errors=True)
+    shutil.rmtree(demo_dir / "workdir", ignore_errors=True)
 
 
 def prepare_demo_dir(

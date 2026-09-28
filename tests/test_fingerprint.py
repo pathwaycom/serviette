@@ -1,4 +1,4 @@
-"""Unit tests for the persistence configuration fingerprint."""
+"""Unit tests for the configuration fingerprint kept in the working directory."""
 
 from __future__ import annotations
 
@@ -21,7 +21,8 @@ def _config(tmp_path, chunk_size=512, embedder_model=None, enabled=True):
                 "api_key": "sk-SECRET",
             },
             "splitter": {"type": "token_count", "chunk_size": chunk_size},
-            "persistence": {"enabled": enabled, "path": str(tmp_path / "persist")},
+            "workdir_path": str(tmp_path / "workdir"),
+            "persistence": {"enabled": enabled},
         }
     )
 
@@ -29,7 +30,7 @@ def _config(tmp_path, chunk_size=512, embedder_model=None, enabled=True):
 def test_first_run_writes_fingerprint(tmp_path):
     config = _config(tmp_path)
     check_fingerprint(config)
-    stored = json.loads((tmp_path / "persist" / _FILENAME).read_text())
+    stored = json.loads((tmp_path / "workdir" / _FILENAME).read_text())
     assert stored["splitter"]["chunk_size"] == 512
 
 
@@ -54,7 +55,7 @@ def test_env_confirmation_accepts_and_updates(tmp_path, monkeypatch):
     check_fingerprint(_config(tmp_path, chunk_size=512))
     monkeypatch.setenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", "1")
     check_fingerprint(_config(tmp_path, chunk_size=256))
-    stored = json.loads((tmp_path / "persist" / _FILENAME).read_text())
+    stored = json.loads((tmp_path / "workdir" / _FILENAME).read_text())
     assert stored["splitter"]["chunk_size"] == 256
     # Accepted once — the updated fingerprint now matches without the env.
     monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES")
@@ -68,9 +69,15 @@ def test_embedder_change_is_flagged(tmp_path, monkeypatch):
         check_fingerprint(_config(tmp_path, embedder_model="text-embedding-3-large"))
 
 
-def test_disabled_persistence_skips_check(tmp_path):
-    check_fingerprint(_config(tmp_path, enabled=False))
-    assert not (tmp_path / "persist" / _FILENAME).exists()
+def test_disabled_persistence_still_checks(tmp_path, monkeypatch):
+    """Without persistence a restart re-indexes everything, but rows written
+    under the old chunking keep their ids in the vector DB — the drift is
+    just as real, so the fingerprint is kept and checked regardless."""
+    monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", raising=False)
+    check_fingerprint(_config(tmp_path, enabled=False, chunk_size=512))
+    assert (tmp_path / "workdir" / _FILENAME).is_file()
+    with pytest.raises(SystemExit, match="Refusing to start"):
+        check_fingerprint(_config(tmp_path, enabled=False, chunk_size=256))
 
 
 def _config_with_embedder(tmp_path, **embedder):
@@ -79,7 +86,7 @@ def _config_with_embedder(tmp_path, **embedder):
             "sources": [{"type": "fs", "path": "/data"}],
             "vector_db": {"type": "duckdb", "path": str(tmp_path / "x.duckdb")},
             "embedder": {"type": "openai", "api_key": "sk-SECRET", **embedder},
-            "persistence": {"enabled": True, "path": str(tmp_path / "persist")},
+            "workdir_path": str(tmp_path / "workdir"),
         }
     )
 
@@ -133,14 +140,14 @@ def test_fingerprint_records_chunk_id_scheme(tmp_path):
 
 
 def test_pre_scheme_fingerprint_is_flagged(tmp_path, monkeypatch):
-    """A persistence directory built before the chunk-id scheme was recorded
+    """A working directory built before the chunk-id scheme was recorded
     (or under an older scheme) must prompt: its rows carry ids the current
     ``make_id`` would not reproduce on retraction."""
 
     monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", raising=False)
     config = _config(tmp_path)
     check_fingerprint(config)
-    path = tmp_path / "persist" / _FILENAME
+    path = tmp_path / "workdir" / _FILENAME
     stored = json.loads(path.read_text())
     del stored["chunk_id"]
     path.write_text(json.dumps(stored))

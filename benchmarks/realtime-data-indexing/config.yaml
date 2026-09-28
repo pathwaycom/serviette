@@ -45,10 +45,10 @@ indexer:
 # Product default: persistence on. Lives inside the container (fresh each
 # run, since run_bench recreates containers), so runs stay cold-start honest
 # while exercising the same code path users get — including the disk-backed
-# parse cache under <path>/runtime_calls.
+# parse cache under <workdir>/persistence/runtime_calls.
+workdir_path: /tmp/serviette-workdir
 persistence:
   enabled: true
-  path: /tmp/persistence
 
 server:
   host: 0.0.0.0

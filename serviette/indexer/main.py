@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> None:
 
     inside_spawn = "PATHWAY_PROCESS_ID" in os.environ
     if config.indexer.workers > 1 and not inside_spawn:
-        # Check the persistence fingerprint and prepare the target once, in
+        # Check the configuration fingerprint and prepare the target once, in
         # the parent, before any worker starts writing.
         from serviette.indexer.fingerprint import check_fingerprint
         from serviette.indexer.prepare import prepare_backend
