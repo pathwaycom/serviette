@@ -25,13 +25,16 @@ class FakeProc:
         return self._codes[0]
 
 
-def _config(host: str = "127.0.0.1", port: int = 8989) -> ServietteConfig:
+def _config(
+    host: str = "127.0.0.1", port: int = 8989, index_wait_timeout: float | None = 120.0
+) -> ServietteConfig:
     return ServietteConfig.model_validate(
         {
             "sources": [{"type": "fs", "path": "."}],
             "vector_db": {"type": "duckdb", "path": "e.duckdb"},
             "embedder": {"type": "mock"},
             "server": {"host": host, "port": port},
+            "up": {"index_wait_timeout": index_wait_timeout},
         }
     )
 
@@ -118,3 +121,62 @@ def test_index_wait_reports_indexer_failure(monkeypatch):
         _config(), FakeProc([3]), ready=lambda _c, allow_empty: False
     )
     assert result == 3
+
+
+def _fake_clock(monkeypatch, step: float = 30.0):
+    """``time.monotonic`` advancing ``step`` seconds per call."""
+
+    ticks = iter(i * step for i in range(10_000))
+    monkeypatch.setattr("serviette.up.time.monotonic", lambda: next(ticks))
+
+
+def test_index_wait_gives_up_after_the_timeout(monkeypatch, caplog):
+    """A non-empty folder whose documents never yield a chunk (all skipped or
+    failing to parse) must not hold the server back forever."""
+
+    monkeypatch.setattr("serviette.up._sources_look_empty", lambda _c: False)
+    _fake_clock(monkeypatch)
+    probes = 0
+
+    def never_ready(_config, allow_empty):
+        nonlocal probes
+        probes += 1
+        return False
+
+    result = _wait_for_index(
+        _config(index_wait_timeout=100.0), FakeProc([None]), ready=never_ready
+    )
+    assert result is None
+    assert probes <= 6  # ~100s at 30s per probe, not thousands
+    assert "starting the server over an empty index" in caplog.text
+
+
+def test_index_wait_timeout_none_waits_indefinitely(monkeypatch, caplog):
+    monkeypatch.setattr("serviette.up._sources_look_empty", lambda _c: False)
+    _fake_clock(monkeypatch)
+    probes = 0
+
+    def ready(_config, allow_empty):
+        nonlocal probes
+        probes += 1
+        return probes >= 50  # far beyond the default 120s at 30s per probe
+
+    result = _wait_for_index(
+        _config(index_wait_timeout=None), FakeProc([None]), ready=ready
+    )
+    assert result is None
+    assert probes == 50
+    assert "starting the server over an empty index" not in caplog.text
+
+
+def test_index_wait_ready_before_timeout_is_silent(monkeypatch, caplog):
+    monkeypatch.setattr("serviette.up._sources_look_empty", lambda _c: False)
+    _fake_clock(monkeypatch)
+    probes = iter([False, True])
+    result = _wait_for_index(
+        _config(index_wait_timeout=100.0),
+        FakeProc([None]),
+        ready=lambda _c, allow_empty: next(probes),
+    )
+    assert result is None
+    assert "empty index" not in caplog.text

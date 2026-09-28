@@ -9,7 +9,9 @@ deletion time, its old chunk ids would not match, and the vector DB would
 keep orphaned rows.
 
 To catch that, the indexer stores the full risk-relevant objects (not just a
-hash) in ``<persistence dir>/serviette-fingerprint.json``:
+hash) in ``<persistence dir>/serviette-fingerprint.json`` (next to the engine's
+own ``PStorage`` subdirectory, never inside it — the engine logs an ERROR for
+every foreign entry in its directory):
 
 - the splitter config,
 - the embedder identity: type, model, ``document_prefix`` and every extra
@@ -36,14 +38,14 @@ import json
 import logging
 import os
 import sys
-from pathlib import Path
 from typing import Any
 
 from serviette.config.schema import ServietteConfig
 
 logger = logging.getLogger(__name__)
 
-_FILENAME = "serviette-fingerprint.json"
+FINGERPRINT_FILENAME = "serviette-fingerprint.json"
+_FILENAME = FINGERPRINT_FILENAME  # backwards-compatible alias
 _ACCEPT_ENV = "SERVIETTE_ACCEPT_FINGERPRINT_CHANGES"
 
 _RISKS = {
@@ -184,7 +186,7 @@ def check_fingerprint(config: ServietteConfig) -> None:
 
     if not config.persistence.enabled:
         return  # no persisted state to be inconsistent with
-    directory = Path(config.persistence.path)
+    directory = config.persistence.data_path()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / _FILENAME
 

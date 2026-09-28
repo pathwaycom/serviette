@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 import yaml
 from pydantic import (
@@ -559,7 +559,7 @@ class IndexerConfig(BaseModel):
     # limits, connection resets — so 0 is only for tests.
     fetch_retries: int = Field(default=3, ge=0)
     # Advanced. Disk budget for the parse cache (pw.udfs.DefaultCache, stored
-    # under <persistence dir>/runtime_calls, LRU-evicted). Size it at least to
+    # under <persistence dir>/PStorage/runtime_calls, LRU-evicted). Size it at least to
     # the extracted-text volume of the corpus to avoid re-parse churn.
     parse_cache_size_gb: int = Field(default=8, ge=1)
     # Advanced. If set, the engine keeps the memoization cache of
@@ -587,14 +587,32 @@ class PersistenceConfig(BaseModel):
     indexer was down, and the parse cache (``runtime_calls``). Advanced users
     tune or disable it by editing the config directly; disabling also
     disables the parse cache.
+
+    Layout: ``path`` is serviette's data directory. serviette's own artifacts
+    (the configuration fingerprint) live at its top level; the Pathway engine
+    gets the ``PStorage`` subdirectory (:meth:`engine_path`) to itself. The
+    engine treats every entry of its directory as persisted state and logs an
+    ERROR for anything it did not write, so the two must not share a folder.
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    ENGINE_SUBDIR: ClassVar[str] = "PStorage"
 
     enabled: bool = True
     backend: Literal["filesystem"] = "filesystem"
     # Relative to the indexer's working directory; writable out of the box.
     path: str = "./persistence"
+
+    def data_path(self) -> Path:
+        """serviette's data directory (fingerprint and other own artifacts)."""
+
+        return Path(self.path)
+
+    def engine_path(self) -> Path:
+        """The directory handed to the Pathway persistence backend."""
+
+        return self.data_path() / self.ENGINE_SUBDIR
 
 
 class ServerConfig(BaseModel):
@@ -618,6 +636,20 @@ class ServerConfig(BaseModel):
     # CORS). Disable for a pure-API deployment; the standalone
     # `serviette frontend` command covers split UI/API deployments.
     serve_frontend: bool = True
+
+
+class UpConfig(BaseModel):
+    """``serviette up`` supervisor options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Seconds ``up`` holds the server back waiting for the first indexed
+    # chunks. Normally the wait ends within seconds; it never ends when the
+    # source folder holds only documents that yield no text (scans without
+    # the OCR extra, audio without its API key, files whose parser fails),
+    # so after this long the server starts over the empty index with a
+    # warning and documents keep being indexed live. null = wait forever.
+    index_wait_timeout: float | None = Field(default=120.0, ge=0)
 
 
 class FrontendConfig(BaseModel):
@@ -667,6 +699,7 @@ class ServietteConfig(BaseModel):
 
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    up: UpConfig = Field(default_factory=UpConfig)
     llm: LLMConfig | None = None
     reranker: RerankerConfig | None = None
     rag: RagConfig | None = None

@@ -24,7 +24,7 @@ Parse caching
 -------------
 Cross-restart parse caching is delegated entirely to Pathway:
 ``pw.udfs.DefaultCache`` stores results on disk (diskcache, LRU-bounded) under
-``<persistence dir>/runtime_calls`` whenever persistence is enabled — which is
+``<persistence dir>/PStorage/runtime_calls`` whenever persistence is enabled — which is
 the default. No caching machinery lives in serviette; disabling persistence also
 disables the parse cache (every restart re-fetches and re-parses).
 
@@ -50,6 +50,7 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, ClassVar
 
 import pathway as pw
@@ -904,6 +905,46 @@ def _libpq_settings(connection_string: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def prepare_persistence_dir(config: ServietteConfig) -> Path:
+    """Create the engine's persistence directory and return it.
+
+    ``persistence.path`` is serviette's data directory: its top level holds
+    serviette's own artifacts (the fingerprint) and the engine gets the
+    ``PStorage`` subdirectory. The engine scans its directory and logs an
+    ERROR for every entry it did not write, which is why the two are apart.
+
+    Releases up to 0.1.2 handed the engine ``persistence.path`` itself. Such
+    a directory (no ``PStorage`` yet, engine entries at the top level) is
+    migrated in place — its entries move down into ``PStorage`` — so an
+    upgrade keeps the incremental state instead of re-indexing everything.
+    """
+
+    from serviette.indexer.fingerprint import FINGERPRINT_FILENAME
+
+    persistence = config.persistence
+    data_dir = persistence.data_path()
+    engine_dir = persistence.engine_path()
+    if not engine_dir.exists():
+        # Own artifacts stay at the top level; everything else is engine state.
+        legacy = (
+            [entry for entry in data_dir.iterdir() if entry.name != FINGERPRINT_FILENAME]
+            if data_dir.is_dir()
+            else []
+        )
+        engine_dir.mkdir(parents=True, exist_ok=True)
+        if legacy:
+            for entry in legacy:
+                entry.rename(engine_dir / entry.name)
+            logger.warning(
+                "Moved the Pathway persistence state of an older serviette "
+                "layout from %s into %s (%d entries).",
+                data_dir,
+                engine_dir,
+                len(legacy),
+            )
+    return engine_dir
+
+
 def persistence_config(config: ServietteConfig):
     """Build a ``pw.persistence.Config`` (or None) from config.
 
@@ -914,7 +955,7 @@ def persistence_config(config: ServietteConfig):
 
     if not config.persistence.enabled:
         return None
-    backend = pw.persistence.Backend.filesystem(config.persistence.path)
+    backend = pw.persistence.Backend.filesystem(str(prepare_persistence_dir(config)))
     return pw.persistence.Config(backend)
 
 

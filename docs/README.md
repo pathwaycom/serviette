@@ -200,10 +200,11 @@ hardcoded.
 | `indexer.workers` | int | `1` | indexer | Worker **processes** (sharded via `pathway spawn`). Raise for large backfills — each worker carries its own embedding stack (~1 GB with local embeddings); the benchmarks run with `8`. |
 | `persistence.enabled` | bool | `true` | indexer | See [Persistence](#5-persistence). |
 | `persistence.backend` | `filesystem` | `filesystem` | indexer | Persistence backend. |
-| `persistence.path` | str | `./persistence` | indexer | Persistence directory (also hosts the parse cache under `runtime_calls/`). Silent default — the wizard does not ask. |
+| `persistence.path` | str | `./persistence` | indexer | serviette's data directory: the configuration fingerprint at its top level, the Pathway persistence state (and the parse cache, `runtime_calls/`) under `PStorage/`. Silent default — the wizard does not ask. |
 | `server.host` / `server.port` | str / int | `127.0.0.1` / `8989` | server | Bind address. Loopback by default; set `0.0.0.0` explicitly to listen on all interfaces (containers, remote access) — see [Security](#security--exposing-the-server). |
 | `server.serve_frontend` | bool | `true` | server | Serve the chat UI on `/` from the same port (API stays under `/api/v1`). |
 | `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. serviette's own UIs never need it. Prefer exact origins over `*`. |
+| `up.index_wait_timeout` | float\|null | `120` | up | Seconds `serviette up` holds the server back waiting for the first indexed chunks. A folder whose documents all yield no text (scans without the `ocr` extra, audio without its API key, parser failures) never produces one, so after this long the server starts over the empty index with a warning; `null` waits forever. |
 | `llm.type` | str | `openai` | server | LLM for `/rag` (omit to disable `/rag`). |
 | `llm.model` | str | `gpt-4o-mini` | server | Chat model. |
 | `llm.api_key` | str | — | server | API key (or `${ENV}`). |
@@ -362,7 +363,9 @@ the last run, so:
 - **documents removed while the indexer was down are correctly retracted** from
   the vector DB on the next run.
 
-The same persistence directory also hosts the **parse cache**
+The engine's state lives under `<persistence.path>/PStorage/` (the top level of
+`persistence.path` is reserved for serviette's own files, such as the
+configuration fingerprint); the same `PStorage/` also hosts the **parse cache**
 (`runtime_calls/`, via `pw.udfs.DefaultCache` — diskcache, LRU-bounded by
 `indexer.parse_cache_size_gb`, default 8): extracted document text stays warm
 across restarts, so unchanged documents are neither re-downloaded nor

@@ -162,10 +162,18 @@ def _wait_for_index(
     short (returns None; the caller checks the flag) — otherwise a SIGTERM
     during a long first indexing pass would be ignored until the first
     chunks land. ``ready`` is injectable for tests.
+
+    The wait is bounded by ``up.index_wait_timeout``: a non-empty folder
+    whose documents all yield no text (scans without OCR, audio without its
+    API key, parser failures) never produces a chunk, and the indexer keeps
+    running in streaming mode — without the bound ``up`` would heartbeat
+    forever. On expiry the server starts over the empty index with a
+    warning; whatever becomes indexable later shows up live.
     """
 
     started = time.monotonic()
     last_beat = 0.0
+    timeout = config.up.index_wait_timeout
     allow_empty = _sources_look_empty(config)
     if allow_empty:
         logger.info(
@@ -184,6 +192,16 @@ def _wait_for_index(
             # decide, the server can legitimately serve an empty index.
             return None
         now = time.monotonic()
+        if timeout is not None and now - started >= timeout:
+            logger.warning(
+                "up: no document produced a chunk within %.0fs — starting the "
+                "server over an empty index anyway. Check the indexer log "
+                "above for skipped or failed documents (a parser missing its "
+                "package or API key, fetch errors); documents keep being "
+                "indexed live. Tune or disable this with up.index_wait_timeout.",
+                now - started,
+            )
+            return None
         if now - last_beat >= _WAIT_HEARTBEAT:
             last_beat = now
             logger.info(
