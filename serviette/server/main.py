@@ -34,7 +34,7 @@ from serviette.server.accessors import AsyncVectorAccessor, build_accessor
 from serviette.server.accessors.abstract import IndexNotReadyError
 from serviette.server.decompose import decompose_query
 from serviette.server.embedder import AsyncEmbedder, build_embedder
-from serviette.server.llm import AsyncLLM, build_llm
+from serviette.server.llm import DEFAULT_SYSTEM_PROMPT, AsyncLLM, build_llm
 from serviette.server.ranking import interleave_merge, mmr_select
 from serviette.server.reranker import AsyncReranker, build_reranker
 
@@ -319,11 +319,16 @@ def create_app(
                 answer=answer, sources=[RetrieveResult(**h) for h in hits]
             )
         # Adaptive RAG: grow the context geometrically while the LLM reports
-        # that it cannot answer from what it was given.
+        # that it cannot answer from what it was given. The system prompt is
+        # two independent parts: the answering *policy* (the configured
+        # llm.system_prompt, or the built-in grounded default) and the
+        # no-answer *protocol* the loop relies on — always appended, since
+        # the marker is what tells the loop to fetch more context.
+        policy = getattr(config.llm, "system_prompt", None) or DEFAULT_SYSTEM_PROMPT
         system_prompt = (
-            "You are a helpful assistant. Answer the user's question using "
-            "only the provided context. If the context does not contain the "
-            f'information needed, reply exactly "{adaptive.no_answer_string}".'
+            f"{policy}\n\n"
+            "If the provided context does not contain the information needed "
+            f'to answer, reply exactly "{adaptive.no_answer_string}".'
         )
         k = req.k
         for iteration in range(adaptive.max_iterations):

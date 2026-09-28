@@ -46,10 +46,13 @@ def store_path(tmp_path):
     return path
 
 
-def _app(store_path, embedder, *, llm=None, rag=None, reranker=None, hybrid=False):
+def _app(
+    store_path, embedder, *, llm=None, rag=None, reranker=None, hybrid=False, llm_config=None
+):
     config = ServietteConfig(
         vector_db=DuckDbConfig(type="duckdb", path=str(store_path), hybrid=hybrid),
         embedder=EmbedderConfig(type="openai"),
+        llm=llm_config,
         rag=rag,
         reranker=reranker,
         server=ServerConfig(serve_frontend=False),
@@ -99,6 +102,40 @@ def test_adaptive_rag_grows_context_until_answered(store_path, mock_server_embed
         p is not None and "No information found" in p for p in llm.system_prompts
     )
     assert len(resp.json()["sources"]) == 4
+
+
+def test_adaptive_rag_keeps_the_configured_policy(store_path, mock_server_embedder):
+    """rag.adaptive must not replace llm.system_prompt: the user's answering
+    policy stays, the no-answer marker instruction is appended to it."""
+
+    policy = "Answer briefly; you may add your own knowledge to the context."
+    llm = _AdaptiveLLM(need=1)
+    rag = RagConfig(adaptive={"factor": 2, "max_iterations": 2})
+    app = _app(
+        store_path,
+        mock_server_embedder,
+        llm=llm,
+        rag=rag,
+        llm_config=LLMConfig(type="mock", system_prompt=policy),
+    )
+    with TestClient(app) as client:
+        client.post("/api/v1/rag", json={"query": "who?", "k": 1})
+    (prompt,) = llm.system_prompts
+    assert prompt.startswith(policy)
+    assert "No information found" in prompt
+
+
+def test_adaptive_rag_defaults_to_the_grounded_policy(store_path, mock_server_embedder):
+    from serviette.server.llm import DEFAULT_SYSTEM_PROMPT
+
+    llm = _AdaptiveLLM(need=1)
+    rag = RagConfig(adaptive={"factor": 2, "max_iterations": 2})
+    app = _app(store_path, mock_server_embedder, llm=llm, rag=rag)
+    with TestClient(app) as client:
+        client.post("/api/v1/rag", json={"query": "who?", "k": 1})
+    (prompt,) = llm.system_prompts
+    assert prompt.startswith(DEFAULT_SYSTEM_PROMPT)
+    assert "No information found" in prompt
 
 
 def test_adaptive_rag_gives_up_after_max_iterations(store_path, mock_server_embedder):

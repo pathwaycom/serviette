@@ -448,11 +448,24 @@ class RerankerConfig(BaseModel):
 
 
 class SplitterConfig(BaseModel):
+    """Chunking strategy: ``token_count`` (default), ``recursive``, or
+    ``null`` — no splitting, the whole document is one chunk (short,
+    self-contained documents: FAQ entries, product cards). Extra keys are
+    forwarded to the xpack splitter constructor."""
+
     model_config = ConfigDict(extra="allow")
 
     type: str = "token_count"
     chunk_size: int = 512
     chunk_overlap: int = 50
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _yaml_null_means_no_splitter(cls, value: Any) -> Any:
+        # ``type: null`` is the natural way to write it in YAML, and the
+        # YAML parser hands it over as None; treat that as the "null"
+        # splitter rather than failing validation with "expected a string".
+        return "null" if value is None else value
 
 
 class LLMConfig(BaseModel):
@@ -476,7 +489,11 @@ class LLMConfig(BaseModel):
     # default ("answer only from the provided context") — right for private
     # corpora where hallucinated outside knowledge is unacceptable. Override
     # to allow blending the model's own knowledge with the context (e.g. for
-    # public-domain corpora the model has largely memorized).
+    # public-domain corpora the model has largely memorized). Adaptive RAG
+    # keeps this policy and appends its own no-answer instruction (the
+    # marker that tells it to fetch more context) — note that a policy which
+    # lets the model answer from its own knowledge rarely triggers that
+    # marker, so the context then rarely grows.
     system_prompt: str | None = None
 
 
@@ -775,21 +792,53 @@ def require_source_dirs(config: ServietteConfig) -> None:
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def interpolate_env(value: Any) -> Any:
+class MissingEnvVarError(ValueError):
+    """A ``${VAR}`` reference in the config names an environment variable
+    that is not set."""
+
+
+def interpolate_env(value: Any, *, strict: bool = True) -> Any:
     """Recursively replace ``${VAR}`` occurrences in strings with env values.
 
-    A missing variable resolves to an empty string and a warning-worthy state
-    that surfaces later as a validation/connection error, rather than silently
-    embedding the literal ``${VAR}`` text.
+    A reference to an unset variable is an error (:class:`MissingEnvVarError`,
+    naming every such variable and where it is used): resolving it to an
+    empty string used to send ``api_key: ""`` to the provider, whose 401
+    ("incorrect API key") hid the actual cause. ``strict=False`` keeps the
+    empty-string behavior for callers validating the *shape* of a config
+    that is meant to run elsewhere (the wizard's tests).
     """
 
-    if isinstance(value, str):
-        return _ENV_PATTERN.sub(lambda m: os.environ.get(m.group(1), ""), value)
-    if isinstance(value, dict):
-        return {k: interpolate_env(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [interpolate_env(v) for v in value]
-    return value
+    missing: list[tuple[str, str]] = []
+
+    def visit(node: Any, where: str) -> Any:
+        if isinstance(node, str):
+
+            def substitute(match: re.Match[str]) -> str:
+                name = match.group(1)
+                if name not in os.environ:
+                    missing.append((name, where))
+                    return ""
+                return os.environ[name]
+
+            return _ENV_PATTERN.sub(substitute, node)
+        if isinstance(node, dict):
+            return {k: visit(v, f"{where}.{k}" if where else str(k)) for k, v in node.items()}
+        if isinstance(node, list):
+            return [visit(v, f"{where}[{i}]") for i, v in enumerate(node)]
+        return node
+
+    result = visit(value, "")
+    if missing and strict:
+        listed = "\n".join(
+            f"  - ${{{name}}} (used in {where or 'the value'})" for name, where in missing
+        )
+        raise MissingEnvVarError(
+            "The config references environment variable(s) that are not set:\n"
+            f"{listed}\n"
+            "Export them before starting (e.g. `export OPENAI_API_KEY=sk-...`) "
+            "or replace the reference in the config."
+        )
+    return result
 
 
 def load_config(path: str | Path) -> ServietteConfig:
@@ -798,14 +847,21 @@ def load_config(path: str | Path) -> ServietteConfig:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise TypeError(f"Config root must be a mapping, got {type(raw).__name__}")
-    interpolated = interpolate_env(raw)
+    try:
+        interpolated = interpolate_env(raw)
+    except MissingEnvVarError as exc:
+        raise MissingEnvVarError(f"Invalid configuration in {path}:\n{exc}") from None
     try:
         return ServietteConfig.model_validate(interpolated)
     except ValidationError as exc:  # pragma: no cover - re-raised with context
         raise ValueError(f"Invalid configuration in {path}:\n{exc}") from exc
 
 
-def load_config_dict(data: dict[str, Any]) -> ServietteConfig:
-    """Validate an already-parsed config dict (used by the quickstart wizard)."""
+def load_config_dict(data: dict[str, Any], *, strict_env: bool = True) -> ServietteConfig:
+    """Validate an already-parsed config dict.
 
-    return ServietteConfig.model_validate(interpolate_env(data))
+    ``strict_env=False`` tolerates ``${VAR}`` references to unset variables —
+    for validating the shape of a generated config that will run elsewhere.
+    """
+
+    return ServietteConfig.model_validate(interpolate_env(data, strict=strict_env))

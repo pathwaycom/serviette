@@ -29,7 +29,8 @@ def _validate(answers: dict) -> ServietteConfig:
     config_dict = build_config(answers)
     # Round-trips through YAML the way the wizard writes it.
     reparsed = yaml.safe_load(dump_yaml(config_dict))
-    return load_config_dict(reparsed)
+    # Shape only: the ${ENV} references are for the machine the config runs on.
+    return load_config_dict(reparsed, strict_env=False)
 
 
 def test_universal_config_valid():

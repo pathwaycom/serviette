@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 
 FINGERPRINT_FILENAME = "serviette-fingerprint.json"
 _FILENAME = FINGERPRINT_FILENAME  # backwards-compatible alias
-_ACCEPT_ENV = "SERVIETTE_ACCEPT_FINGERPRINT_CHANGES"
+ACCEPT_ENV = "SERVIETTE_ACCEPT_FINGERPRINT_CHANGES"
+_ACCEPT_ENV = ACCEPT_ENV  # backwards-compatible alias
 
 _RISKS = {
     "splitter": (

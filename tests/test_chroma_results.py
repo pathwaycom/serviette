@@ -7,6 +7,7 @@ such a value raises, which used to break the hybrid+MMR path.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from serviette.server.accessors.chroma import _first_or_empty, _or_empty
 
@@ -24,3 +25,75 @@ def test_query_embeddings_list_of_ndarray():
     assert _first_or_empty(None) == []
     assert _first_or_empty([]) == []
     assert _first_or_empty(np.zeros((0, 2))) == []
+
+
+# ---------------------------------------------------------------------------
+# close(): release the HTTP connection pools
+# ---------------------------------------------------------------------------
+
+
+class _FakeServerApi:
+    def __init__(self):
+        self.cleaned_up = 0
+
+    async def _cleanup(self):
+        self.cleaned_up += 1
+
+
+class _FakeAsyncClient:
+    def __init__(self):
+        self._server = _FakeServerApi()
+
+    async def get_collection(self, name):
+        return object()
+
+
+def test_close_releases_chroma_http_pools(monkeypatch):
+    """chromadb's AsyncClient has no public close; the accessor must still
+    release the httpx pools its server API holds (``_cleanup``, the hook
+    the client's own ``__aexit__`` uses) instead of dropping references."""
+
+    import asyncio
+
+    import chromadb
+
+    from serviette.config.schema import ChromaConfig
+    from serviette.server.accessors.chroma import ChromaAccessor
+
+    created: list[_FakeAsyncClient] = []
+
+    async def fake_http_client(**kwargs):
+        client = _FakeAsyncClient()
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(chromadb, "AsyncHttpClient", fake_http_client)
+    accessor = ChromaAccessor(ChromaConfig(type="chroma"))
+
+    async def run():
+        await accessor._ensure_collection()
+        await accessor.close()
+        await accessor.close()  # idempotent
+
+    asyncio.run(run())
+    (client,) = created
+    assert client._server.cleaned_up == 1
+    assert accessor._client is None and accessor._collection is None
+
+
+def test_close_before_connect_is_a_noop():
+    import asyncio
+
+    from serviette.config.schema import ChromaConfig
+    from serviette.server.accessors.chroma import ChromaAccessor
+
+    asyncio.run(ChromaAccessor(ChromaConfig(type="chroma")).close())
+
+
+def test_installed_chromadb_still_exposes_the_cleanup_hook():
+    """Guard for the private hook ``close`` relies on: if a chromadb upgrade
+    renames it, the pools would silently leak again."""
+
+    async_fastapi = pytest.importorskip("chromadb.api.async_fastapi")
+
+    assert callable(getattr(async_fastapi.AsyncFastAPI, "_cleanup", None))

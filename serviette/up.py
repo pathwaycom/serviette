@@ -36,10 +36,32 @@ _POLL_INTERVAL = 0.3
 _TERM_GRACE = 10.0
 
 
-def _spawn(command: str, config_path: str) -> subprocess.Popen:
+def _spawn(
+    command: str, config_path: str, *, env: dict[str, str] | None = None
+) -> subprocess.Popen:
     return subprocess.Popen(
-        [sys.executable, "-m", "serviette.cli", command, "--config", config_path]
+        [sys.executable, "-m", "serviette.cli", command, "--config", config_path],
+        env=env,
     )
+
+
+def _confirm_fingerprint(config: ServietteConfig) -> dict[str, str]:
+    """Ask the fingerprint question here, not in the indexer child.
+
+    The child shares this terminal; its ``input()`` prompt would sit under
+    the "indexing in progress" heartbeat printed every few seconds, so the
+    user sees progress while the indexer actually waits for a "yes". Same
+    check (diff, prompt on a TTY, refusal otherwise), same env override —
+    just asked before anything else is printed. Returns the environment for
+    the child, which tells it the answer is already given.
+    """
+
+    import os
+
+    from serviette.indexer.fingerprint import ACCEPT_ENV, check_fingerprint
+
+    check_fingerprint(config)  # updates the stored fingerprint on "yes"
+    return {**os.environ, ACCEPT_ENV: "1"}
 
 
 def _terminate(proc: subprocess.Popen, name: str) -> None:
@@ -306,7 +328,7 @@ def run(config: ServietteConfig, config_path: str) -> int:
     require_source_dirs(config)
     _warn_duckdb_streaming(config)
 
-    indexer = _spawn("indexer", config_path)
+    indexer = _spawn("indexer", config_path, env=_confirm_fingerprint(config))
     logger.info("up: indexer started (pid %d)", indexer.pid)
 
     shutdown_requested = False

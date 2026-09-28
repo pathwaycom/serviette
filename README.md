@@ -267,6 +267,9 @@ answer is not found.
   scoring (`type: llm`). Best for precise, single-hop questions.
 - **Adaptive RAG.** Answers from `k` chunks first, then grows the context and
   re-asks while the LLM reports the answer is not present (`rag.adaptive`).
+  Your `llm.system_prompt` stays in force; the mode only appends the
+  "reply with this marker when the context is insufficient" instruction it
+  needs to decide when to fetch more.
 - **Query decomposition.** One LLM call splits a multi-hop question into
   sub-queries, retrieves for each, and fuses — so chunks of different hops
   stop competing for the same top-k slots (`rag.decompose`).

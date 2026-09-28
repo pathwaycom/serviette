@@ -137,5 +137,15 @@ class ChromaAccessor(KeywordHybridMixin, AsyncVectorAccessor):
 
     async def close(self) -> None:
         await self._close_hybrid()
-        self._client = None
-        self._collection = None
+        client, self._client, self._collection = self._client, None, None
+        if client is None:
+            return
+        # chromadb's AsyncClient has no public close: its AsyncFastAPI server
+        # API keeps one httpx.AsyncClient per event loop and releases them in
+        # ``_cleanup`` (also what its ``__aexit__`` calls). The chromadb
+        # System behind the client is shared between clients with the same
+        # settings and is left alone; a surviving client lazily reopens its
+        # pool on the next request.
+        cleanup = getattr(getattr(client, "_server", None), "_cleanup", None)
+        if cleanup is not None:
+            await cleanup()

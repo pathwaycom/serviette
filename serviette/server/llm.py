@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-_DEFAULT_SYSTEM_PROMPT = (
+DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful assistant. Answer the user's question using only the "
     "provided context. If the context is insufficient, say so."
 )
+_DEFAULT_SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 
 @runtime_checkable

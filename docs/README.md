@@ -135,7 +135,9 @@ The key is applied when the indexing graph is initialized.
 A single YAML file can configure both the indexer and the server (a *universal*
 config), or you can split it into an indexer-only and a server-only file. Any
 string value supports `${ENV_VAR}` interpolation, so credentials never need to be
-hardcoded.
+hardcoded. A reference to a variable that is not set is a startup error naming
+the variable and the config key using it (it does not silently become an empty
+string, which would only surface later as a provider 401).
 
 | Field | Type | Default | Used by | Description |
 |---|---|---|---|---|
@@ -193,7 +195,7 @@ hardcoded.
 | `embedder.type` | str | `openai` | both | Embedder family (see below). |
 | `embedder.model` | str | provider default | both | Model name. |
 | `embedder.api_key` | str | — | both | API key (or `${ENV}`). |
-| `splitter.type` | `token_count`\|`recursive` | `token_count` | indexer | Chunking strategy. |
+| `splitter.type` | `token_count`\|`recursive`\|`null` | `token_count` | indexer | Chunking strategy. `null` disables splitting — the whole document is one chunk (short, self-contained documents such as FAQ entries or product cards); written as `type: null` or `type: "null"`, both work. |
 | `splitter.chunk_size` | int | `512` | indexer | Max chunk size (tokens). |
 | `splitter.chunk_overlap` | int | `50` | indexer | Overlap (used by `recursive`). |
 | `indexer.fetch_retries` | int | `3` | indexer | Retries (exponential backoff from 1s) of a document's byte fetch before it is given up on: indexed as empty and ERROR-logged. Remote sources fail transiently under bulk backfills. |
@@ -208,6 +210,8 @@ hardcoded.
 | `llm.type` | str | `openai` | server | LLM for `/rag` (omit to disable `/rag`). |
 | `llm.model` | str | `gpt-4o-mini` | server | Chat model. |
 | `llm.api_key` | str | — | server | API key (or `${ENV}`). |
+| `llm.system_prompt` | str | built-in grounded prompt | server | Answering policy for `/rag`. The default tells the model to answer only from the provided context; override to let it blend in its own knowledge (e.g. public-domain corpora). Kept under `rag.adaptive`, which appends its no-answer instruction to it. |
+| `rag.adaptive` | `{factor, max_iterations, no_answer_string}` | — (off) | server | Adaptive RAG: answer from `k` chunks, then grow the context by `factor` and re-ask (up to `max_iterations` rounds) while the reply contains `no_answer_string` (default `No information found`). The system prompt is the `llm.system_prompt` policy plus an appended instruction to reply with that marker when the context is insufficient; a policy that allows answers from the model's own knowledge rarely triggers the marker, so the context then rarely grows. |
 | `frontend.host` / `frontend.port` | str / int | `127.0.0.1` / `3000` | frontend (standalone) | Bind address for the split-deployment chat UI. |
 | `frontend.api_url` | str | `http://localhost:8989` | frontend (standalone) | Base URL of the API the standalone frontend proxies to — point it at the backend host in split deployments (frontend fleet / backend fleet). The address never reaches the browser. |
 | `frontend.title` | str | `serviette` | both | Title shown in the chat UI (embedded and standalone). |

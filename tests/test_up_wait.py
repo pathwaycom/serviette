@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import pytest
 
+from serviette import up
 from serviette.config.schema import ServietteConfig
 from serviette.up import _probe_host, _server_url, _wait_for_index, _wait_for_server
 
 
 class FakeProc:
+    pid = 4242
+
     def __init__(self, codes):
         # Successive poll() results; the last one repeats.
         self._codes = list(codes)
@@ -198,3 +201,63 @@ def test_index_wait_ready_before_timeout_is_silent(monkeypatch, caplog):
     )
     assert result is None
     assert "empty index" not in caplog.text
+
+
+def test_fingerprint_is_confirmed_by_up_before_the_indexer_starts(tmp_path, monkeypatch):
+    """The fingerprint question is up's: asked in a quiet terminal before the
+    indexer is spawned (a child's prompt would sit under the heartbeat), and
+    the child is told the answer is already given."""
+
+    events: list = []
+
+    def fake_check(config):
+        events.append("check")
+
+    monkeypatch.setattr("serviette.indexer.fingerprint.check_fingerprint", fake_check)
+
+    def fake_spawn(command, config_path, *, env=None):
+        events.append((command, env))
+        # indexer keeps running; the server "exits 0" so run() returns.
+        return FakeProc([None]) if command == "indexer" else FakeProc([0])
+
+    monkeypatch.setattr(up, "_spawn", fake_spawn)
+    monkeypatch.setattr(up, "_wait_for_index", lambda *a, **k: None)
+    monkeypatch.setattr(up, "_wait_for_server", lambda *a, **k: None)
+    monkeypatch.setattr(up, "_terminate", lambda proc, name: None)
+    monkeypatch.delenv("SERVIETTE_ACCEPT_FINGERPRINT_CHANGES", raising=False)
+
+    config = ServietteConfig.model_validate(
+        {
+            "sources": [{"type": "fs", "path": str(tmp_path), "mode": "static"}],
+            "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+            "embedder": {"type": "mock"},
+            "persistence": {"path": str(tmp_path / "persist")},
+        }
+    )
+    assert up.run(config, "config.yaml") == 0
+    assert events[0] == "check"
+    command, env = events[1]
+    assert command == "indexer"
+    assert env["SERVIETTE_ACCEPT_FINGERPRINT_CHANGES"] == "1"
+    # The server child inherits the plain environment.
+    assert events[2][0] == "server" and events[2][1] is None
+
+
+def test_up_refuses_when_the_fingerprint_is_declined(tmp_path, monkeypatch):
+    spawned = []
+    monkeypatch.setattr(up, "_spawn", lambda *a, **k: spawned.append(a))
+
+    def refuse(config):
+        raise SystemExit("Refusing to start: the configuration change above ...")
+
+    monkeypatch.setattr("serviette.indexer.fingerprint.check_fingerprint", refuse)
+    config = ServietteConfig.model_validate(
+        {
+            "sources": [{"type": "fs", "path": str(tmp_path), "mode": "static"}],
+            "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+            "embedder": {"type": "mock"},
+        }
+    )
+    with pytest.raises(SystemExit, match="Refusing to start"):
+        up.run(config, "config.yaml")
+    assert spawned == []  # nothing started

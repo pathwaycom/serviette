@@ -124,9 +124,12 @@ class PgVectorAccessor(KeywordHybridMixin, AsyncVectorAccessor):
     async def stats(self) -> dict[str, Any]:
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
+            # Document identity per source type: path (fs, s3, sharepoint,
+            # pyfilesystem) or id / name (gdrive).
             row = await conn.fetchrow(
                 f"SELECT count(*) AS chunks,"
-                f"  count(DISTINCT metadata->>'path') AS documents,"
+                f"  count(DISTINCT coalesce(metadata->>'path', metadata->>'id',"
+                f"    metadata->>'name')) AS documents,"
                 f"  max((metadata->>'seen_at')::bigint) AS last_indexed_at "
                 f"FROM {self._table}"
             )

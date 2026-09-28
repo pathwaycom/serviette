@@ -46,3 +46,43 @@ def test_recursive_forwards_extra_keys():
 def test_unknown_splitter_key_fails_at_build_time():
     with pytest.raises(TypeError, match="not_a_real_option"):
         _build(SplitterConfig(type="token_count", not_a_real_option=1))
+
+
+def test_yaml_null_selects_the_null_splitter(tmp_path):
+    """``type: null`` is what people write in YAML; the parser hands it over
+    as None, which used to fail validation ("expected a string")."""
+
+    import yaml
+
+    from serviette.config.schema import SplitterConfig, load_config
+
+    assert SplitterConfig(type=None).type == "null"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "sources": [{"type": "fs", "path": str(tmp_path)}],
+                "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+                "embedder": {"type": "mock"},
+                "splitter": {"type": None},
+            }
+        )
+    )
+    assert "type: null" in config_path.read_text()
+    config = load_config(config_path)
+    assert config.splitter.type == "null"
+    # Same fingerprint whether written as null or "null": no spurious
+    # "configuration changed" prompt from the spelling alone.
+    assert config.splitter.model_dump() == SplitterConfig(type="null").model_dump()
+
+
+def test_null_splitter_keeps_the_whole_document():
+    from pathway.xpacks.llm import splitters
+
+    from serviette.config.schema import SplitterConfig
+    from serviette.indexer.graph import build_xpack_splitter
+
+    splitter = build_xpack_splitter(SplitterConfig(type=None))
+    assert isinstance(splitter, splitters.NullSplitter)
+    text = "para one\n\n" + "word " * 2000
+    assert [chunk for chunk, _ in splitter.chunk(text)] == [text]

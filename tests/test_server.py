@@ -300,6 +300,34 @@ def test_stats_endpoint(store_path, mock_server_embedder):
     assert body["documents"] == 3
 
 
+def test_stats_counts_documents_of_every_source_type(tmp_path, mock_server_embedder):
+    """Document identity is whatever the source reports: ``path`` for fs / s3
+    / sharepoint / pyfilesystem, ``id`` (and ``name``) for Google Drive —
+    which used to count as zero documents."""
+
+    path = tmp_path / "store.duckdb"
+    rows = [
+        {"metadata": {"path": "/docs/a.txt"}},
+        {"metadata": {"path": "/docs/a.txt"}},  # second chunk, same file
+        {"metadata": {"path": "/docs/b.txt"}},
+        {"metadata": {"id": "gdrive-1", "name": "report.pdf"}},
+        {"metadata": {"id": "gdrive-1", "name": "report.pdf"}},
+        {"metadata": {"id": "gdrive-2", "name": "notes.docx"}},
+        {"metadata": {"name": "only-a-name.md"}},
+    ]
+    write_duckdb_rows(
+        path,
+        [
+            {"id": str(i), "text": f"chunk {i}", "embedding": fake_embedding(str(i)), **row}
+            for i, row in enumerate(rows)
+        ],
+    )
+    with _client(path, mock_server_embedder) as client:
+        body = client.get("/api/v1/stats").json()
+    assert body["chunks"] == 7
+    assert body["documents"] == 5
+
+
 def test_stats_last_indexed_at_moves_on_deletion(store_path, mock_server_embedder):
     """Deleting rows is a change even though no row carries a newer seen_at."""
 

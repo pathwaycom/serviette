@@ -196,9 +196,14 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
     def _stats(self) -> dict[str, Any]:
         conn = self._connect_with_retry()
         try:
+            # A document is identified by whatever the source reports: ``path``
+            # (fs, s3, sharepoint, pyfilesystem) or ``id`` / ``name`` (gdrive).
             chunks, documents, last = conn.execute(
                 f"SELECT count(*),"
-                f"  count(DISTINCT json_extract_string(metadata, '$.path')),"
+                f"  count(DISTINCT coalesce("
+                f"    json_extract_string(metadata, '$.path'),"
+                f"    json_extract_string(metadata, '$.id'),"
+                f"    json_extract_string(metadata, '$.name'))),"
                 f"  max(TRY_CAST(json_extract(metadata, '$.seen_at') AS BIGINT)) "
                 f'FROM "{self._table}"'
             ).fetchone()
