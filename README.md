@@ -288,9 +288,13 @@ the store, so support depends on the backend:
 | MongoDB  | ✅ | ✅ | ✅ | ✅ in-process |
 | Pinecone | ✅ | ✅ | ✅ | ❌ — no scan-all API; native sparse-index hybrid is planned |
 
-In-process BM25 targets corpora up to a few million chunks; above
-`hybrid_max_chunks` the keyword leg is skipped with a warning and retrieval
-stays pure-vector. **Pinecone** cannot enumerate its vectors, so it has no
+The in-process index follows the store: it is rebuilt as soon as the backend
+reports a change (the row count; on DuckDB and pgvector also the newest
+`seen_at`, which catches in-place edits) and refreshed in the background every
+`hybrid_refresh_seconds` (default 30) as a bound on staleness for whatever
+that cheap signal misses. In-process BM25 targets corpora up to a few million
+chunks; above `hybrid_max_chunks` the keyword leg is skipped with a warning and
+retrieval stays pure-vector. **Pinecone** cannot enumerate its vectors, so it has no
 in-process hybrid — `hybrid: true` there fails fast at startup with that
 explanation; native hybrid (a second sparse index) is planned. Native
 server-side BM25 for the client-server backends (replacing the in-process

@@ -212,7 +212,8 @@ class _HybridCapableConfig(BaseModel):
     """Mixed into every backend whose accessor can run in-process BM25 hybrid.
 
     ``hybrid`` fuses vector search with a BM25 keyword index built in-process
-    from the backend's stored texts (rebuilt when the row count changes) via
+    from the backend's stored texts (rebuilt on change, see
+    ``hybrid_refresh_seconds``) via
     reciprocal-rank fusion — it helps entity-heavy queries (names, dates, IDs)
     that embedding distance ranks poorly. In-process BM25 targets corpora up to
     a few million chunks; above ``hybrid_max_chunks`` the keyword leg is skipped
@@ -222,6 +223,13 @@ class _HybridCapableConfig(BaseModel):
 
     hybrid: bool = False
     hybrid_max_chunks: int = Field(default=5_000_000, ge=1)
+    # Upper bound on how stale the in-process BM25 index may get. The index
+    # is rebuilt at once when the backend reports a change (row count; on
+    # DuckDB/pgvector also the newest ``seen_at``, which catches in-place
+    # edits), and additionally refreshed in the background once this many
+    # seconds have passed since the last build — the safety net for changes
+    # the backend's cheap signal cannot see. null disables the timed refresh.
+    hybrid_refresh_seconds: float | None = Field(default=30.0, ge=0)
 
 
 class PgVectorConfig(_HybridCapableConfig):

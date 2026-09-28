@@ -93,6 +93,16 @@ class PgVectorAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         async with pool.acquire() as conn:
             return int(await conn.fetchval(f"SELECT count(*) FROM {self._table}"))
 
+    async def _hybrid_version(self) -> tuple[int, Any]:
+        # Newest seen_at moves on in-place edits the count cannot see.
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                f"SELECT count(*) AS chunks, "
+                f"max((metadata->>'seen_at')::bigint) AS newest FROM {self._table}"
+            )
+        return int(row["chunks"]), row["newest"]
+
     async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
         pool = await self._ensure_pool()
         embedding_col = ", embedding" if with_embeddings else ""
@@ -129,6 +139,7 @@ class PgVectorAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return out
 
     async def close(self) -> None:
+        await self._close_hybrid()
         if self._pool is not None:
             await self._pool.close()
             self._pool = None

@@ -408,6 +408,37 @@ def test_hybrid_index_rebuilds_when_rows_change(tmp_path, mock_server_embedder):
         assert any("zanzibar" in t for t in texts)
 
 
+def test_hybrid_index_follows_in_place_edits(tmp_path, mock_server_embedder):
+    """An edited document is re-emitted with a fresher ``seen_at`` but the
+    same number of chunks; the keyword leg must pick the new text up (and
+    drop the old) without waiting for the timed refresh."""
+
+    path = tmp_path / "store.duckdb"
+
+    def rows(price: str, seen_at: int):
+        texts = DOCS + [f"pricing: the Team tier costs {price} EUR per month"]
+        return [
+            {
+                "id": str(i),
+                "text": text,
+                "metadata": {"path": f"/docs/{i}.txt", "seen_at": seen_at},
+                "embedding": fake_embedding(text),
+            }
+            for i, text in enumerate(texts)
+        ]
+
+    write_duckdb_rows(path, rows("129", seen_at=1_700_000_000))
+    app = _app(path, mock_server_embedder, hybrid=True)
+    with TestClient(app) as client:
+        first = client.post("/api/v1/retrieve", json={"query": "Team tier 129 EUR", "k": 2})
+        assert any("129 EUR" in r["text"] for r in first.json()["results"])
+        write_duckdb_rows(path, rows("199", seen_at=1_700_000_001))
+        second = client.post("/api/v1/retrieve", json={"query": "Team tier 129 EUR", "k": 2})
+        texts = [r["text"] for r in second.json()["results"]]
+        assert any("199 EUR" in t for t in texts)
+        assert not any("129 EUR" in t for t in texts)
+
+
 async def test_cross_encoder_splits_constructor_and_predict_kwargs(monkeypatch):
     """Extra ``reranker`` keys go where sentence-transformers expects them:
     ``device``/``max_length`` to ``CrossEncoder(...)``, ``batch_size`` and the

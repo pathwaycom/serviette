@@ -116,6 +116,7 @@ class MongoDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return {"chunks": await self._hybrid_count()}
 
     async def close(self) -> None:
+        await self._close_hybrid()
         if self._client is not None:
             await self._client.close()
             self._client = None

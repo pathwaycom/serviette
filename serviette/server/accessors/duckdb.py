@@ -64,6 +64,9 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
     async def _hybrid_count(self) -> int:
         return await asyncio.to_thread(self._count_rows)
 
+    async def _hybrid_version(self) -> tuple[int, Any]:
+        return await asyncio.to_thread(self._version)
+
     async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._fetch_all_rows, with_embeddings)
 
@@ -143,6 +146,22 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
             conn.close()
         return int(count)
 
+    def _version(self) -> tuple[int, Any]:
+        """``(row count, newest seen_at)``: an edited document is re-emitted
+        with a fresher ``seen_at``, so in-place edits that keep the chunk
+        count move this where the count alone would not."""
+
+        conn = self._connect_with_retry()
+        try:
+            count, newest = conn.execute(
+                f"SELECT count(*),"
+                f"  max(TRY_CAST(json_extract(metadata, '$.seen_at') AS BIGINT)) "
+                f'FROM "{self._table}" WHERE embedding IS NOT NULL'
+            ).fetchone()
+        finally:
+            conn.close()
+        return int(count), newest
+
     def _fetch_all_rows(self, with_embeddings: bool) -> list[dict[str, Any]]:
         """Every stored chunk as a BM25 hit dict (read off the event loop).
 
@@ -191,4 +210,4 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return out
 
     async def close(self) -> None:
-        return None  # connections are per-query
+        await self._close_hybrid()  # connections themselves are per-query

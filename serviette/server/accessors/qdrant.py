@@ -93,9 +93,11 @@ class QdrantAccessor(KeywordHybridMixin, AsyncVectorAccessor):
     # -- hybrid hooks (KeywordHybridMixin) ------------------------------------
 
     async def _hybrid_count(self) -> int:
+        # Exact: the approximate count can stay put over small changes and
+        # would leave the BM25 index stale until the timed refresh.
         client = self._ensure_client()
         return int(
-            (await client.count(collection_name=self._collection, exact=False)).count
+            (await client.count(collection_name=self._collection, exact=True)).count
         )
 
     async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
@@ -121,6 +123,7 @@ class QdrantAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return {"chunks": int(result.count)}
 
     async def close(self) -> None:
+        await self._close_hybrid()
         if self._client is not None:
             await self._client.close()
             self._client = None

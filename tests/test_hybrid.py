@@ -13,9 +13,11 @@ from serviette.server.hybrid import KeywordHybridMixin
 
 
 class _Config:
-    def __init__(self, hybrid=False, hybrid_max_chunks=5_000_000):
+    def __init__(self, hybrid=False, hybrid_max_chunks=5_000_000, hybrid_refresh_seconds=None):
         self.hybrid = hybrid
         self.hybrid_max_chunks = hybrid_max_chunks
+        # None here: the unit tests below pin the timed refresh explicitly.
+        self.hybrid_refresh_seconds = hybrid_refresh_seconds
 
 
 class FakeHybridAccessor(KeywordHybridMixin, AsyncVectorAccessor):
@@ -126,3 +128,100 @@ def test_mmr_path_carries_embeddings_through_fusion():
     )
     # Every fused hit keeps its embedding (needed downstream by MMR).
     assert all("embedding" in h for h in hits)
+
+
+class _VersionedAccessor(FakeHybridAccessor):
+    """A backend that can report a change marker next to the count (as the
+    DuckDB / pgvector accessors do with the newest ``seen_at``)."""
+
+    async def _hybrid_version(self):
+        return len(self._rows), hash(tuple(text for text, _ in self._rows))
+
+
+EDITED = ("pricing: Team tier costs 199 EUR per month", [1.0, 0.0])
+ORIGINAL = ("pricing: Team tier costs 129 EUR per month", [1.0, 0.0])
+
+
+def test_change_marker_rebuilds_on_in_place_edit():
+    """Same row count, new text: the keyword leg must not keep serving the
+    old chunk (the demo's "edit pricing.md" moment)."""
+
+    acc = _VersionedAccessor([ORIGINAL, ROWS[1]], _Config(hybrid=True))
+
+    async def run():
+        before = await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
+        acc._rows[0] = EDITED
+        after = await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
+        return before, after
+
+    before, after = asyncio.run(run())
+    assert ORIGINAL[0] in [h["text"] for h in before]
+    assert ORIGINAL[0] not in [h["text"] for h in after]
+    assert acc.fetch_all_calls == 2
+
+
+def _clock(monkeypatch, start=1000.0):
+    now = {"t": start}
+    monkeypatch.setattr("serviette.server.hybrid.time.monotonic", lambda: now["t"])
+    return now
+
+
+def test_timed_refresh_catches_edits_the_count_misses(monkeypatch):
+    """Without a change marker the count alone misses an in-place edit; the
+    timed refresh bounds how long the stale index is served, and runs in the
+    background so the triggering query is answered from the current index."""
+
+    now = _clock(monkeypatch)
+    acc = FakeHybridAccessor([ORIGINAL, ROWS[1]], _Config(hybrid=True, hybrid_refresh_seconds=30))
+
+    async def run():
+        await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
+        acc._rows[0] = EDITED
+        now["t"] += 10
+        stale = await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
+        assert acc.fetch_all_calls == 1  # within the TTL: no refresh yet
+        now["t"] += 25
+        during = await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
+        refresh = acc._bm25_refresh
+        assert refresh is not None and not refresh.done()
+        await refresh
+        fresh = await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
+        await acc.close()
+        return stale, during, fresh
+
+    stale, during, fresh = asyncio.run(run())
+    assert ORIGINAL[0] in [h["text"] for h in stale]
+    assert ORIGINAL[0] in [h["text"] for h in during]  # served the old index, rebuilt behind it
+    assert ORIGINAL[0] not in [h["text"] for h in fresh]
+    assert acc.fetch_all_calls == 2
+
+
+def test_timed_refresh_disabled_with_none(monkeypatch):
+    now = _clock(monkeypatch)
+    acc = FakeHybridAccessor(list(ROWS), _Config(hybrid=True, hybrid_refresh_seconds=None))
+
+    async def run():
+        await acc.retrieve_ex([0.0, 0.0], 2, query_text="cats")
+        now["t"] += 10_000
+        await acc.retrieve_ex([0.0, 0.0], 2, query_text="cats")
+        assert acc._bm25_refresh is None
+
+    asyncio.run(run())
+    assert acc.fetch_all_calls == 1
+
+
+def test_timed_refresh_runs_one_at_a_time(monkeypatch):
+    now = _clock(monkeypatch)
+    acc = FakeHybridAccessor(list(ROWS), _Config(hybrid=True, hybrid_refresh_seconds=1))
+
+    async def run():
+        await acc.retrieve_ex([0.0, 0.0], 2, query_text="cats")
+        now["t"] += 5
+        await acc.retrieve_ex([0.0, 0.0], 2, query_text="cats")
+        first = acc._bm25_refresh
+        await acc.retrieve_ex([0.0, 0.0], 2, query_text="dogs")
+        assert acc._bm25_refresh is first  # no second task while one is pending
+        await acc.close()
+
+    asyncio.run(run())
+    assert acc.fetch_all_calls == 2

@@ -136,5 +136,6 @@ class ChromaAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return {"chunks": await self._hybrid_count()}
 
     async def close(self) -> None:
+        await self._close_hybrid()
         self._client = None
         self._collection = None
