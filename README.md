@@ -17,6 +17,9 @@ export OPENAI_API_KEY=sk-...
 serviette demo --embedder openai      # → chat at http://localhost:8989
 ```
 
+Use pip 23.1 or newer (`python -m pip install -U pip` first): older pip lacks
+the resolver improvements this dependency tree needs and can take hours.
+
 This indexes a [small bundled corpus](https://github.com/pathwaycom/serviette/tree/main/serviette/demo/corpus) (a fictional
 coffee-machine company) into `./serviette-demo/docs` and opens a chat over
 it. Edit or drop files into that folder while it runs — the answers

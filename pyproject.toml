@@ -49,6 +49,17 @@ dependencies = [
     # numba 0.53 whose llvmlite predates py3.10 and fails to build. 0.59 is
     # the first numba with py3.12 wheels.
     "numba>=0.59",
+    # Resolver guards for pathway[xpack-llm]: its google-generativeai pin needs
+    # protobuf<6, while pathway's unbounded google-cloud-pubsub / google-api-core
+    # resolve to releases that need protobuf>=6.33.5. Without these caps pip
+    # 25.1-25.3 backtracks through ~30 pubsub releases and dies with
+    # resolution-too-deep; older pip wanders for hours.
+    "protobuf<6",
+    "google-cloud-pubsub<2.40",
+    "google-api-core<2.34; python_version < '3.14'",
+    # google-api-core>=2.26 on 3.14 wants grpcio-status>=1.75.1, which the
+    # xpack-llm extra forbids (<1.72).
+    "google-api-core<2.26; python_version >= '3.14'",
 ]
 
 [project.optional-dependencies]
