@@ -7,6 +7,7 @@ available.
 
 from __future__ import annotations
 
+import json
 import socket
 import subprocess
 import time
@@ -75,6 +76,54 @@ def run_container(
     if result.returncode != 0:
         raise RuntimeError(f"docker run failed: {result.stderr}")
     return result.stdout.strip()
+
+
+def wait_healthy(container_id: str, *, timeout: float = 300, interval: float = 2.0) -> None:
+    """Block until the container's own HEALTHCHECK reports ``healthy``.
+
+    For images that bundle several processes (e.g. mongod + mongot in
+    ``mongodb-atlas-local``) a TCP/ping probe of the main port says nothing
+    about the sidecar, while the image's healthcheck covers all of them.
+    Raises ``RuntimeError`` if the container disappears (crashed and was
+    auto-removed) and ``TimeoutError`` if it never becomes healthy; both
+    messages carry the last healthcheck output for diagnosis.
+    """
+
+    deadline = time.monotonic() + timeout
+    last: dict = {}
+    while time.monotonic() < deadline:
+        proc = subprocess.run(
+            ["docker", "inspect", "--format", "{{json .State}}", container_id],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"container {container_id[:12]} is gone before becoming healthy "
+                f"(last healthcheck: {_last_health_log(last)})"
+            )
+        last = json.loads(proc.stdout)
+        if last.get("Health", {}).get("Status") == "healthy":
+            return
+        if last.get("Status") not in ("created", "running"):
+            raise RuntimeError(
+                f"container {container_id[:12]} stopped ({last.get('Status')}, "
+                f"exit code {last.get('ExitCode')}) before becoming healthy "
+                f"(last healthcheck: {_last_health_log(last)})"
+            )
+        time.sleep(interval)
+    raise TimeoutError(
+        f"container {container_id[:12]} not healthy within {timeout}s "
+        f"(status {last.get('Health', {}).get('Status')!r}, "
+        f"last healthcheck: {_last_health_log(last)})"
+    )
+
+
+def _last_health_log(state: dict) -> str:
+    entries = state.get("Health", {}).get("Log") or []
+    if not entries:
+        return "<none>"
+    entry = entries[-1]
+    return f"exit {entry.get('ExitCode')}: {(entry.get('Output') or '').strip()[:500]!r}"
 
 
 def stop_container(container_id: str) -> None:
