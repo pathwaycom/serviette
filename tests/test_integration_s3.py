@@ -29,9 +29,12 @@ from tests.integration_common import ALPHA, BETA, run_indexer, write_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
-# Docker Hub no longer serves ``minio/minio`` (pull access denied), so the
-# image comes from quay.io; pinned to a release tag for reproducible CI runs.
-IMAGE = "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
+# Neither Docker Hub ``minio/minio`` nor ``quay.io/minio/minio`` allow
+# anonymous pulls any more, so the image is Bitnami's (legacy, frozen)
+# MinIO build; pinned to a release tag for reproducible CI runs. The Bitnami
+# image starts the server through its own entrypoint (no ``server /data``
+# command) and reads the root credentials from the same MINIO_ROOT_* variables.
+IMAGE = "bitnamilegacy/minio:2025.7.23-debian-12-r5"
 BUCKET = "serviette-docs"
 ACCESS_KEY = "minioadmin"
 SECRET_KEY = "minioadmin"
@@ -64,7 +67,6 @@ def minio_port(tcp_port):
         IMAGE,
         ports={port: 9000},
         env={"MINIO_ROOT_USER": ACCESS_KEY, "MINIO_ROOT_PASSWORD": SECRET_KEY},
-        command=["server", "/data"],
     )
     try:
         wait_until(
