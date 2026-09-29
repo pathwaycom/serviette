@@ -232,3 +232,6 @@ serviette-workdir/
 # Internal planning document — kept local, never committed (purged from
 # history on 2026-07-09).
 docs/ROADMAP.md
+scripts/
+ROADMAP.md
+.venv*/
