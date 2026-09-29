@@ -117,8 +117,9 @@ def build_config(answers: dict[str, Any]) -> dict[str, Any]:
             "host": answers.get("server_host", "127.0.0.1"),
             "port": answers.get("server_port", 8989),
         }
-        if answers.get("rag_enabled"):
-            config["llm"] = _llm_section(answers)
+        # /rag (and the web chat) is always on; ``llm`` only picks what
+        # answers. ``mock`` needs no key and quotes the best snippet verbatim.
+        config["llm"] = _llm_section(answers)
 
     return config
 
@@ -198,10 +199,13 @@ def _embedder_section(answers: dict[str, Any]) -> dict[str, Any]:
 
 
 def _llm_section(answers: dict[str, Any]) -> dict[str, Any]:
-    section: dict[str, Any] = {"type": answers.get("llm_type", "openai")}
+    llm_type = answers.get("llm_type", "mock")
+    section: dict[str, Any] = {"type": llm_type}
+    if llm_type == "mock":
+        return section
     if answers.get("llm_model"):
         section["model"] = answers["llm_model"]
-    api_key = answers.get("llm_api_key", _ENV_REF.get(answers.get("llm_type", "openai")))
+    api_key = answers.get("llm_api_key", _ENV_REF.get(llm_type))
     if api_key:
         section["api_key"] = api_key
     return section
@@ -622,11 +626,25 @@ class Wizard:
         if needs_server:
             # Host/port are silent defaults (127.0.0.1:8989 — loopback + uncommon port, no
             # tool conflicts); emitted into the YAML for later tuning.
-            self._section("Enable /rag endpoint?")
-            answers["rag_enabled"] = self.p.confirm("Enable /rag endpoint?", default=False)
-            if answers["rag_enabled"]:
-                llm_idx = self.p.select("LLM:", ["openai", "litellm"], default_index=0)
-                answers["llm_type"] = ["openai", "litellm"][llm_idx]
+            self._section("Chat answers")
+            self.p.info(
+                "  The /rag endpoint and the web chat are always available. This picks\n"
+                "  the LLM that turns the retrieved snippets into an answer:\n"
+                "    mock    - no LLM and no API key. The chat replies with the best\n"
+                "              matching snippet quoted verbatim: good for checking what\n"
+                "              gets retrieved, but the answers are not natural language.\n"
+                "    openai  - real generated answers from the OpenAI API (needs\n"
+                "              OPENAI_API_KEY).\n"
+                "    litellm - any provider LiteLLM supports (needs that provider's key)."
+            )
+            llm_types = ["mock", "openai", "litellm"]
+            llm_idx = self.p.select(
+                "LLM for chat answers:",
+                ["mock (no LLM: quote the best snippet)", "openai", "litellm"],
+                default_index=0,
+            )
+            answers["llm_type"] = llm_types[llm_idx]
+            if answers["llm_type"] != "mock":
                 answers["llm_model"] = self.p.text("LLM model", default="gpt-4o-mini")
                 answers["llm_api_key"] = self.p.text(
                     "LLM API key", default=_ENV_REF.get(answers["llm_type"], "${OPENAI_API_KEY}")

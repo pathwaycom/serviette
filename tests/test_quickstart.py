@@ -20,7 +20,7 @@ BASE = {
     "chunk_overlap": 50,
     "server_host": "127.0.0.1",
     "server_port": 8000,
-    "rag_enabled": False,
+    "llm_type": "mock",
     "output_path": "./config.yaml",
 }
 
@@ -65,11 +65,19 @@ def test_license_key_present_in_yaml():
     assert yaml.safe_load(text)["pathway_license_key"] == "test-license-key-123"
 
 
-def test_rag_section_emitted_when_enabled():
+def test_server_config_always_has_llm_mock_by_default():
+    """/rag is always on: a server config carries an ``llm`` section even when
+    the user picked no LLM (mock answers quote the best snippet)."""
+    answers = {**BASE, "config_type": "server"}
+    config_dict = build_config(answers)
+    assert config_dict["llm"] == {"type": "mock"}
+    _validate(answers).for_server()
+
+
+def test_llm_section_openai():
     answers = {
         **BASE,
         "config_type": "server",
-        "rag_enabled": True,
         "llm_type": "openai",
         "llm_model": "gpt-4o-mini",
         "llm_api_key": "${OPENAI_API_KEY}",
@@ -188,7 +196,7 @@ def test_wizard_run_collects_gdrive_source():
         "postgresql://u:p@h/db",
         "",                         # collection default
         "1",                        # embedder: local sentence_transformer -> no questions
-        "",                         # rag? No (default)
+        "",                         # LLM for chat answers: mock (default)
         "LIC",                      # license
         "",                         # output path
     ]
