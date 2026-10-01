@@ -82,6 +82,7 @@
   .sources .src { padding: 10px 12px; border-top: 1px solid var(--border); font-size: 13px; }
   .sources .src .meta { color: var(--text-soft); font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 8px; }
   .sources .src .snippet { color: var(--text); white-space: pre-wrap; max-height: 120px; overflow: hidden; }
+  .notice { margin: 6px 0 0 42px; max-width: 78%; font-size: 12px; color: var(--text-soft); }
 
   .dots { display: inline-flex; gap: 4px; padding: 4px 0; }
   .dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-soft); animation: blink 1.4s infinite both; }
@@ -233,6 +234,20 @@
     scrollDown();
   }
 
+  // What the answer was based on, as reported by the server (rag.documents):
+  // the documents it was scoped to and any remark on coverage.
+  function renderNotice(data) {
+    const parts = [];
+    if (data.documents && data.documents.length) parts.push("Answered from: " + data.documents.join(", "));
+    if (data.notice && data.mode !== "unresolved") parts.push(data.notice);
+    if (!parts.length) return;
+    const div = document.createElement("div");
+    div.className = "notice";
+    div.textContent = parts.join(" · ");
+    thread.appendChild(div);
+    scrollDown();
+  }
+
   function setBusy(state) {
     busy = state;
     send.disabled = state;
@@ -280,6 +295,7 @@
         typing.bubble.textContent = detail;
       } else {
         typing.bubble.innerHTML = renderMarkdown(data.answer || "(empty answer)");
+        renderNotice(data);
         renderSources(data.sources);
       }
     } catch (err) {

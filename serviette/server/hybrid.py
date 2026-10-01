@@ -30,6 +30,7 @@ import logging
 import time
 from typing import Any
 
+from serviette.server.accessors.abstract import document_key
 from serviette.server.bm25 import Bm25Index
 from serviette.server.ranking import rrf_merge
 
@@ -167,6 +168,49 @@ class KeywordHybridMixin:
             await self._rebuild(version, with_embeddings)
         except Exception as exc:  # noqa: BLE001 - keep serving the previous index
             logger.warning("hybrid: background BM25 refresh failed: %s", exc)
+
+    # -- document catalog (rag.documents) -------------------------------------
+    #
+    # Built from the same full scan as the BM25 corpus and cached on the same
+    # change signal, so listing documents costs one cheap version query per
+    # request. Backends with a query language override ``_catalog_scan`` and
+    # ``document_chunks`` with native queries.
+
+    supports_catalog = True
+    _catalog: list[dict[str, Any]] | None = None
+    _catalog_built_for: tuple[int, Any] | None = None
+    _catalog_built_at = 0.0
+
+    async def list_documents(self) -> list[dict[str, Any]]:
+        version = await self._hybrid_version()
+        ttl = getattr(self, "_hybrid_refresh_seconds", None)
+        stale = ttl is not None and time.monotonic() - self._catalog_built_at >= ttl
+        if self._catalog is None or self._catalog_built_for != version or stale:
+            self._catalog = await self._catalog_scan()
+            self._catalog_built_for = version
+            self._catalog_built_at = time.monotonic()
+        return self._catalog
+
+    async def _catalog_scan(self) -> list[dict[str, Any]]:
+        documents: dict[str, dict[str, Any]] = {}
+        for hit in await self._hybrid_fetch_all(False):
+            key = document_key(hit.get("metadata"))
+            if key is None:
+                continue
+            entry = documents.setdefault(
+                key, {"id": key, "metadata": hit["metadata"], "chunks": 0}
+            )
+            entry["chunks"] += 1
+        return list(documents.values())
+
+    async def document_chunks(
+        self, document: str, *, with_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
+        return [
+            hit
+            for hit in await self._hybrid_fetch_all(with_embeddings)
+            if document_key(hit.get("metadata")) == document
+        ]
 
     async def _close_hybrid(self) -> None:
         """Let a running background refresh finish (called from ``close``)."""

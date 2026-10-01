@@ -547,14 +547,52 @@ class MmrConfig(BaseModel):
     diversity: float = Field(default=0.3, ge=0.0, le=1.0)
 
 
+class DocumentsConfig(BaseModel):
+    """Document-level questions on ``/rag``: how many documents there are,
+    which ones exist, what a named file says, how two files differ.
+
+    On by default (unlike the other ``rag`` strategies) — these are the first
+    questions people ask, and chunk retrieval cannot answer them. A question
+    that names a file (with its extension) is answered from that file
+    directly. Any other question goes through the ordinary search first;
+    only when the LLM reports no answer does one short extra call decide
+    between searching wider (``rag.adaptive``) and answering from the
+    document catalog or from whole documents. Every step is bounded by
+    ``max_context_chars``, whatever the size of the documents.
+
+    While enabled, the ``/rag`` system prompt carries the no-answer
+    instruction ``rag.adaptive`` uses (that reply is what triggers the extra
+    call), with ``corpus_card`` one line stating the document count, and with
+    ``source_labels`` each context chunk is prefixed with its file name.
+    Ignored on backends that cannot enumerate documents (Pinecone).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    # State the number of indexed documents in the /rag system prompt, so
+    # "how many documents do you have" is answered on the first attempt.
+    corpus_card: bool = True
+    # Prefix every retrieved chunk in the /rag context with the name of its
+    # file, so the model can attribute statements and tell apart documents
+    # that disagree (e.g. two versions of one file).
+    source_labels: bool = True
+    # Upper bound, in characters, on the document material one answering
+    # call sees (a whole document, a comparison, or the catalog listing).
+    max_context_chars: int = Field(default=24_000, ge=1_000)
+    # How many document names the routing call is shown.
+    max_listed_documents: int = Field(default=200, ge=1)
+
+
 class RagConfig(BaseModel):
     """Optional retrieval-quality strategies for ``/retrieve`` and ``/rag``.
 
-    All are opt-in and composable: ``decompose`` widens *what* is retrieved,
-    ``mmr`` diversifies *which* candidates survive, ``adaptive`` retries with
-    a larger context when the answer is not found (``/rag`` only; ``decompose``
-    and ``mmr`` also apply to ``/retrieve``, though ``decompose`` needs an
-    ``llm`` section either way).
+    ``decompose`` widens *what* is retrieved, ``mmr`` diversifies *which*
+    candidates survive, ``adaptive`` retries with a larger context when the
+    answer is not found (``/rag`` only; ``decompose`` and ``mmr`` also apply
+    to ``/retrieve``, though ``decompose`` needs an ``llm`` section either
+    way). These three are opt-in and composable; ``documents`` (``/rag``
+    only) is on unless disabled.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -562,6 +600,7 @@ class RagConfig(BaseModel):
     adaptive: AdaptiveRagConfig | None = None
     decompose: DecomposeConfig | None = None
     mmr: MmrConfig | None = None
+    documents: DocumentsConfig = Field(default_factory=DocumentsConfig)
 
 
 # ---------------------------------------------------------------------------

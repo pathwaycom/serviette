@@ -166,8 +166,11 @@ def test_adaptive_rag_stops_when_the_corpus_is_exhausted(store_path, mock_server
 
 
 def test_non_adaptive_rag_uses_default_prompt(store_path, mock_server_embedder):
+    # rag.documents (on by default) appends its own instructions; with it
+    # off and no adaptive loop the prompt is left to the LLM backend.
     llm = _AdaptiveLLM(need=1)
-    app = _app(store_path, mock_server_embedder, llm=llm)
+    rag = RagConfig(documents={"enabled": False})
+    app = _app(store_path, mock_server_embedder, llm=llm, rag=rag)
     with TestClient(app) as client:
         resp = client.post("/api/v1/rag", json={"query": "who?", "k": 2})
     assert resp.status_code == 200
@@ -224,7 +227,9 @@ def test_adaptive_rag_decomposes_once(store_path, mock_server_embedder):
     assert resp.status_code == 200
     assert resp.json()["answer"] == "Real answer from 4 chunks."
     assert llm.context_sizes == [1, 2, 4]
-    assert len(llm.raw_prompts) == 1
+    # The other raw call is rag.documents' routing after the first failure.
+    decompositions = [p for p in llm.raw_prompts if p.startswith("Split the question")]
+    assert len(decompositions) == 1
 
 
 def test_decompose_requires_llm(store_path, mock_server_embedder):
