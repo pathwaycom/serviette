@@ -577,19 +577,19 @@ def create_app(
         query_embedding = await embedder.embed(query_prefix + query)
         limit = documents.max_context_chars
         if len(entries) == 1:
-            mode, system_prompt = "document", docmode.DOCUMENT_SYSTEM_PROMPT
+            mode = "document"
             built = docmode.single_document_context(
                 entries[0], chunks[0], query_embedding, limit
             )
         else:
             import asyncio
 
-            mode, system_prompt = "compare", docmode.COMPARE_SYSTEM_PROMPT
+            mode = "compare"
             # Pairing changed passages is CPU-bound; keep it off the loop.
             built = await asyncio.to_thread(
                 docmode.compare_context, entries, chunks, query_embedding, limit
             )
-        reply = await _complete(budget, query, built.context, system_prompt)
+        reply = await _complete(budget, query, built.context, built.system_prompt)
         notice = built.notice
         if reply is None or len(reply[1]) < len(built.context):
             notice = (notice or "") + _BUDGET_NOTICE

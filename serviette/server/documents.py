@@ -67,6 +67,18 @@ COMPARE_SYSTEM_PROMPT = (
     "of the question."
 )
 
+# For documents compared by excerpts rather than by a diff: there are no
+# computed totals here, and a model asked for totals invents them.
+EXCERPTS_SYSTEM_PROMPT = (
+    "Answer the user's question about the documents below using only the "
+    "provided material. The first item lists the documents; each of the "
+    "others is an excerpt marked with the name of the file it comes from. "
+    "These are a few excerpts per document, not the documents in full and "
+    "not a computed list of their differences: say only what the excerpts "
+    "show, say plainly that the answer rests on excerpts, and never state "
+    "how many differences there are. Answer in the language of the question."
+)
+
 # Goes with :func:`labeled`. Without it the model answers "which documents
 # do you have" from the handful of file names it happens to see — a confident,
 # incomplete list. The marker hands such questions to the catalog instead.
@@ -560,6 +572,8 @@ class DocumentContext:
     context: list[str]
     sources: list[dict[str, Any]]
     notice: str | None = None
+    # Which instructions go with ``context``.
+    system_prompt: str = DOCUMENT_SYSTEM_PROMPT
 
 
 def single_document_context(
@@ -784,7 +798,12 @@ def compare_context(
     notice = "Compared using " + ", ".join(partial) + "." if partial else None
     if partial:
         context[0] += "\nShown: " + ", ".join(partial) + "."
-    return DocumentContext(context=context, sources=sources, notice=notice)
+    return DocumentContext(
+        context=context,
+        sources=sources,
+        notice=notice,
+        system_prompt=EXCERPTS_SYSTEM_PROMPT,
+    )
 
 
 def _diff_context(
@@ -876,4 +895,9 @@ def _diff_context(
         notice += partial
     if not blocks:
         header += " No differences were found in the indexed text."
-    return DocumentContext(context=[header, *shown], sources=sources, notice=notice)
+    return DocumentContext(
+        context=[header, *shown],
+        sources=sources,
+        notice=notice,
+        system_prompt=COMPARE_SYSTEM_PROMPT,
+    )

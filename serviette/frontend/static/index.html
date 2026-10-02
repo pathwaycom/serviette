@@ -71,6 +71,7 @@
   }
   .msg.user .bubble { background: var(--user-bubble); color: var(--user-text); border-bottom-right-radius: 6px; }
   .msg.assistant .bubble { background: var(--assistant-bubble); color: var(--text); border-bottom-left-radius: 6px; }
+  .bubble .h { font-weight: 600; font-size: 16px; }
   .bubble code { background: rgba(127,127,127,.18); padding: 1px 5px; border-radius: 5px; font-size: 13px; }
   .bubble pre { background: rgba(127,127,127,.14); padding: 12px; border-radius: 12px; overflow-x: auto; }
   .bubble pre code { background: none; padding: 0; }
@@ -187,6 +188,11 @@
     let out = escapeHtml(text);
     out = out.replace(/```([\s\S]*?)```/g, (_, c) => "<pre><code>" + c.trim() + "</code></pre>");
     out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
+    // Headings ("## Title") and bullets ("- item", "* item") — the bubble is
+    // pre-wrapped text, so a line-level rewrite is all they need. Bullets go
+    // before emphasis so a leading "* " is not read as an opening asterisk.
+    out = out.replace(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*$/gm, '<span class="h">$1</span>');
+    out = out.replace(/^([ \t]*)[-*][ \t]+/gm, "$1• ");
     out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     out = out.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
     return out;

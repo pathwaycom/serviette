@@ -322,6 +322,7 @@ def test_two_versions_are_compared_as_a_diff(store_path, mock_server_embedder):
     added = next(b for b in blocks if b.startswith("[only in law_2024.txt]"))
     assert "appeals" in added
     assert not any("Unchanged provision" in block for block in blocks)
+    assert llm.calls[0]["system_prompt"] == docmode.COMPARE_SYSTEM_PROMPT
 
 
 def test_diff_larger_than_the_budget_reports_what_is_shown():
@@ -422,6 +423,8 @@ def test_unrelated_documents_share_the_budget(store_path, mock_server_embedder):
     assert body["mode"] == "compare"
     header, *excerpts = llm.calls[0]["context"]
     assert "share little or no identical text" in header
+    # No diff was computed, so the model is not asked for totals.
+    assert llm.calls[0]["system_prompt"] == docmode.EXCERPTS_SYSTEM_PROMPT
     assert any(e.startswith("[menu.md] ") for e in excerpts)
     assert any(e.startswith("[law_2024.txt] ") for e in excerpts)
 
