@@ -15,7 +15,7 @@ use it (see ``create_app``):
   a request does not grow with the size of the documents.
 
 There is no notion of a document *version*: two versions are simply two
-documents that share most of their chunks, which :func:`compare_context`
+documents that share most of their lines, which :func:`compare_context`
 detects and turns into a diff.
 """
 
@@ -27,6 +27,7 @@ import logging
 import math
 import posixpath
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
@@ -55,10 +56,15 @@ DOCUMENT_SYSTEM_PROMPT = (
 
 COMPARE_SYSTEM_PROMPT = (
     "Answer the user's question about the documents below using only the "
-    "provided material, which the system prepared by comparing the documents. "
-    "The first item states what was compared and the exact totals — report "
-    "those totals as given, and if not all differences are shown, say so. "
-    "Answer in the language of the question."
+    "provided material, which the system prepared by comparing the documents: "
+    "the first item says what was compared and gives exact totals, the rest "
+    "are the differences themselves. Describe what actually differs — what "
+    "was added, removed or changed, with specifics (section numbers, names, "
+    "figures), grouped by topic; never answer with the totals alone. Ignore "
+    "differences that are only spacing, hyphenation or punctuation. End with "
+    "the totals exactly as given and, if not all differences are shown, say "
+    "that the description covers only part of them. Answer in the language "
+    "of the question."
 )
 
 # Goes with :func:`labeled`. Without it the model answers "which documents
@@ -67,8 +73,10 @@ COMPARE_SYSTEM_PROMPT = (
 SOURCE_LABELS_NOTE = (
     "Each context excerpt starts with the name of the file it comes from. "
     "The excerpts are a small sample: the file names on them are not the "
-    "list of indexed documents. If the question asks which documents exist, "
-    "asks to list them, or asks about their dates or sizes, reply exactly "
+    "list of indexed documents, and a few excerpts cannot show how whole "
+    "documents differ. If the question asks which documents exist, asks to "
+    "list them, asks about their dates or sizes, or asks what differs or "
+    "changed between documents or versions of a document, reply exactly "
     '"{marker}".'
 )
 
@@ -112,15 +120,28 @@ _FILE_EXTENSIONS = {
 # when no other document comes within the margin.
 _CLOSE_NAME = 0.85
 _CLOSE_NAME_MARGIN = 0.05
-# Two documents sharing at least this fraction of their chunks are compared
+# Two documents sharing at least this fraction of their lines are compared
 # as versions of one text (a diff); below it they are different documents.
 _VERSION_OVERLAP = 0.3
-# An unmatched chunk whose best counterpart in the other document is at least
-# this similar is the same passage edited, not a removal plus an addition.
-_CHANGED_SIMILARITY = 0.8
-# Pairing is quadratic in the unmatched chunks; past this many pairs they are
-# reported as plain additions/removals instead.
-_MAX_PAIRINGS = 20_000
+# Lines shorter than this (after squashing) are not compared: codes and
+# table cells repeat throughout a document and say nothing on their own.
+_MIN_LINE = 12
+# From this many lines on, a chunk's first and last line are taken to be cut
+# by the splitter and are not compared (shorter chunks are whole paragraphs).
+_EDGE_LINES = 3
+# A line whose digit-masked form occurs at least this often in *both*
+# documents is running matter (page headers, numbered rows): its digits are
+# ignored, so a page number or an edition date in a header is not a change.
+_RUNNING_LINES = 20
+# A passage only in one document and a passage only in the other that share
+# at least this fraction of their words are one passage edited.
+_CHANGED_SIMILARITY = 0.5
+# Pairing is quadratic in the differing passages; past this many pairs they
+# are reported as plain additions/removals instead.
+_MAX_PAIRINGS = 400_000
+# Differences shorter than this are shown after the longer ones: a stray
+# line is more often an artifact of text extraction than a change.
+_SUBSTANTIAL = 80
 
 
 def document_name(entry: dict[str, Any]) -> str:
@@ -277,6 +298,55 @@ def resolve_names(names: list[str], catalog: list[dict[str, Any]]) -> Resolution
 # ---------------------------------------------------------------------------
 
 
+class Budget:
+    """The ceiling on what one ``/rag`` request may send to the LLM, in
+    characters, across all of its calls (attempts, routing, the answer).
+
+    Every call is charged before it is made; one that does not fit is cut
+    down to what is left, and once too little is left no call is made at
+    all. The number of calls is bounded elsewhere (each step of the document
+    mode runs at most once) — this bounds their combined size, whatever the
+    documents, ``k`` or the adaptive loop ask for.
+    """
+
+    # Below this a call cannot carry a useful context any more.
+    _MIN_CALL = 500
+
+    def __init__(self, limit: int) -> None:
+        self.left = limit
+        self.exhausted = False
+
+    def take(self, size: int) -> bool:
+        """Charge a call of a fixed ``size``; False when it does not fit."""
+
+        if size > self.left:
+            self.exhausted = True
+            return False
+        self.left -= size
+        return True
+
+    def fit(self, fixed: int, context: list[str]) -> list[str] | None:
+        """Charge a call with ``fixed`` characters of prompt plus as many
+        leading ``context`` items as still fit. ``None`` — no call — when
+        not even one item does."""
+
+        room = self.left - fixed
+        kept: list[str] = []
+        used = 0
+        for item in context:
+            if used + len(item) > room:
+                break
+            kept.append(item)
+            used += len(item)
+        if len(kept) < len(context):
+            self.exhausted = True
+        if (context and not kept) or room < 0 or self.left < self._MIN_CALL:
+            self.exhausted = True
+            return None
+        self.left -= fixed + used
+        return kept
+
+
 @dataclass
 class Route:
     mode: str = "search"  # "search" | "catalog" | "documents"
@@ -304,7 +374,11 @@ def parse_route(reply: str) -> Route:
 
 
 async def arbitrate(
-    llm: AsyncLLM, query: str, catalog: list[dict[str, Any]], max_listed: int
+    llm: AsyncLLM,
+    query: str,
+    catalog: list[dict[str, Any]],
+    max_listed: int,
+    budget: Budget | None = None,
 ) -> Route:
     """One short LLM call: does the question need a wider search or the
     document mode? Sees the question and document names only — never the
@@ -322,6 +396,8 @@ async def arbitrate(
         names="\n".join(f"- {name}" for name in names[:max_listed]),
         query=query,
     )
+    if budget is not None and not budget.take(len(prompt)):
+        return Route()
     try:
         reply = await llm.raw(prompt)
     except Exception:  # noqa: BLE001 - routing must never break /rag
@@ -431,10 +507,6 @@ def catalog_context(catalog: list[dict[str, Any]], budget: int) -> list[str]:
     return ["\n".join(totals), "\n".join([header, *lines])]
 
 
-def _normalize(text: str) -> str:
-    return " ".join(text.split())
-
-
 def _unit(vector: list[float] | None) -> list[float] | None:
     if not vector:
         return None
@@ -519,38 +591,156 @@ def single_document_context(
     )
 
 
+def _squash(text: str) -> str:
+    """``text`` reduced to what must match for two extractions of the same
+    passage to be equal: letters and digits only, one case, no diacritics.
+    PDF text extraction varies between two files of one document in exactly
+    the rest — spacing, soft hyphens, the kind of apostrophe or dash."""
+
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed if ch.isalnum()).casefold()
+
+
+_DIGITS = re.compile(r"\d+")
+
+
+class _Lines:
+    """One document as comparable lines, independent of how it was chunked.
+
+    Chunk boundaries move when text is inserted (token windows), so whole
+    chunks of two versions rarely match; lines do. The store keeps no chunk
+    order, and none is needed: a line is looked up in the other document,
+    not aligned with it.
+    """
+
+    def __init__(self, chunks: list[dict[str, Any]]) -> None:
+        self.chunks = chunks
+        # squashed line -> index of the first chunk containing it
+        self.lines: dict[str, int] = {}
+        # per chunk: its lines as (squashed, raw), in order
+        self.by_chunk: list[list[tuple[str, str]]] = []
+        squashed_chunks = []
+        for index, chunk in enumerate(chunks):
+            rows = [(_squash(raw), raw.strip()) for raw in chunk["text"].splitlines()]
+            squashed_chunks.append("".join(row[0] for row in rows))
+            if len(rows) >= _EDGE_LINES:
+                # A window splitter cuts the first and last line of a chunk
+                # mid-line; such fragments match nothing. The chunk overlap
+                # carries the same lines whole in the neighbouring chunk.
+                rows = rows[1:-1]
+            for squashed, _raw in rows:
+                if len(squashed) >= _MIN_LINE:
+                    self.lines.setdefault(squashed, index)
+            self.by_chunk.append(rows)
+        # The whole text, for finding a line that the other file wraps
+        # differently (so it is no line of its own there).
+        self.text = "\x00".join(squashed_chunks)
+        self.masked = Counter(_DIGITS.sub("#", line) for line in self.lines)
+        # Running matter also gets glued to the front of the line after it
+        # ("<page header> <first line of the page>").
+        running = [
+            mask for mask, count in self.masked.items() if count >= _RUNNING_LINES
+        ]
+        self._running_prefix = (
+            re.compile(
+                "|".join(
+                    re.escape(mask).replace("\\#", r"\d+")
+                    for mask in sorted(running, key=len, reverse=True)
+                )
+            )
+            if running
+            else None
+        )
+
+    def body(self, squashed: str) -> str:
+        """``squashed`` without a running header glued to its front."""
+
+        if self._running_prefix is not None:
+            match = self._running_prefix.match(squashed)
+            if match and len(squashed) - match.end() >= _MIN_LINE:
+                return squashed[match.end() :]
+        return squashed
+
+    def overlap(self, other: _Lines) -> float:
+        total = len(self.lines) + len(other.lines)
+        if not total:
+            return 0.0
+        return 2 * len(self.lines.keys() & other.lines.keys()) / total
+
+    def passages_missing_from(self, other: _Lines) -> list[tuple[str, int]]:
+        """Runs of consecutive lines of this document that the other does
+        not contain, as ``(text, chunk index)``."""
+
+        def present(squashed: str) -> bool:
+            if squashed in other.lines:
+                return True
+            mask = _DIGITS.sub("#", squashed)
+            if (
+                self.masked[mask] >= _RUNNING_LINES
+                and other.masked[mask] >= _RUNNING_LINES
+            ):
+                return True
+            if squashed in other.text:
+                return True
+            body = self.body(squashed)
+            return body is not squashed and body in other.text
+
+        verdicts: dict[str, bool] = {}
+        reported: set[str] = set()
+        passages: list[tuple[str, int]] = []
+        for index, rows in enumerate(self.by_chunk):
+            run: list[str] = []
+            for squashed, raw in [*rows, ("", "")]:
+                missing = False
+                if len(squashed) >= _MIN_LINE and squashed not in reported:
+                    if squashed not in verdicts:
+                        verdicts[squashed] = present(squashed)
+                    missing = not verdicts[squashed]
+                if missing:
+                    reported.add(squashed)  # chunk overlap repeats lines
+                    run.append(raw)
+                elif run:
+                    passages.append(("\n".join(run), index))
+                    run = []
+        return passages
+
+
+def _words(text: str) -> frozenset[str]:
+    return frozenset(re.findall(r"\w{3,}", text.casefold()))
+
+
 def _pair_changed(
-    only_a: list[dict[str, Any]], only_b: list[dict[str, Any]]
-) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
-    """Split unmatched chunks into (changed pairs, removed, added) by greedy
-    best-similarity matching on the stored embeddings."""
+    only_a: list[tuple[str, int]], only_b: list[tuple[str, int]]
+) -> tuple[list[tuple[tuple[str, int], tuple[str, int]]], list, list]:
+    """Split differing passages into (changed pairs, removed, added) by
+    greedy best word-overlap matching."""
 
     if not only_a or not only_b or len(only_a) * len(only_b) > _MAX_PAIRINGS:
         return [], only_a, only_b
-    units_a = [_unit(c.get("embedding")) for c in only_a]
-    units_b = [_unit(c.get("embedding")) for c in only_b]
-    scored = sorted(
-        (
-            (_dot(ua, ub), i, j)
-            for i, ua in enumerate(units_a)
-            for j, ub in enumerate(units_b)
-            if ua is not None and ub is not None
-        ),
-        reverse=True,
-    )
+    words_a = [_words(text) for text, _ in only_a]
+    words_b = [_words(text) for text, _ in only_b]
+    scored = []
+    for i, wa in enumerate(words_a):
+        if not wa:
+            continue
+        for j, wb in enumerate(words_b):
+            if not wb:
+                continue
+            similarity = len(wa & wb) / len(wa | wb)
+            if similarity >= _CHANGED_SIMILARITY:
+                scored.append((similarity, i, j))
+    scored.sort(reverse=True)
     used_a: set[int] = set()
     used_b: set[int] = set()
-    pairs: list[tuple[dict, dict]] = []
-    for similarity, i, j in scored:
-        if similarity < _CHANGED_SIMILARITY:
-            break
+    pairs = []
+    for _similarity, i, j in scored:
         if i in used_a or j in used_b:
             continue
         used_a.add(i)
         used_b.add(j)
         pairs.append((only_a[i], only_b[j]))
-    removed = [c for i, c in enumerate(only_a) if i not in used_a]
-    added = [c for j, c in enumerate(only_b) if j not in used_b]
+    removed = [p for i, p in enumerate(only_a) if i not in used_a]
+    added = [p for j, p in enumerate(only_b) if j not in used_b]
     return pairs, removed, added
 
 
@@ -562,8 +752,8 @@ def compare_context(
 ) -> DocumentContext:
     """Two or more documents within one budget.
 
-    Exactly two documents that share most of their chunks are versions of
-    one text: identical chunks are dropped and the model sees only the
+    Exactly two documents that share most of their lines are versions of
+    one text: what they share is dropped and the model sees only the
     differences (edited passages paired up, then additions and removals),
     with the exact totals computed here. Anything else — unrelated documents,
     or more than two — gets each document's parts closest to the question,
@@ -572,12 +762,9 @@ def compare_context(
 
     names = [document_name(e) for e in entries]
     if len(entries) == 2:
-        texts_a = {_normalize(c["text"]) for c in chunks[0]}
-        texts_b = {_normalize(c["text"]) for c in chunks[1]}
-        shared = texts_a & texts_b
-        total = len(texts_a) + len(texts_b)
-        if total and 2 * len(shared) / total >= _VERSION_OVERLAP:
-            return _diff_context(entries, chunks, shared, budget)
+        lines = [_Lines(chunks[0]), _Lines(chunks[1])]
+        if lines[0].overlap(lines[1]) >= _VERSION_OVERLAP:
+            return _diff_context(entries, chunks, lines, query_embedding, budget)
 
     share = max(budget // max(len(entries), 1), 1)
     context = [
@@ -603,59 +790,88 @@ def compare_context(
 def _diff_context(
     entries: list[dict[str, Any]],
     chunks: list[list[dict[str, Any]]],
-    shared: set[str],
+    lines: list[_Lines],
+    query_embedding: list[float],
     budget: int,
 ) -> DocumentContext:
     name_a, name_b = document_name(entries[0]), document_name(entries[1])
+    pairs, removed, added = _pair_changed(
+        lines[0].passages_missing_from(lines[1]),
+        lines[1].passages_missing_from(lines[0]),
+    )
 
-    def unmatched(doc_chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        seen: set[str] = set()
-        out = []
-        for chunk in doc_chunks:
-            text = _normalize(chunk["text"])
-            if text not in shared and text not in seen:
-                seen.add(text)
-                out.append(chunk)
-        return out
+    # Which differences to show when not all fit: the substantial ones
+    # first, and among those the ones in the parts of the documents closest
+    # to the question.
+    query_unit = _unit(query_embedding)
+    relevance: dict[tuple[int, int], float] = {}
 
-    pairs, removed, added = _pair_changed(unmatched(chunks[0]), unmatched(chunks[1]))
+    def score(doc: int, chunk: int) -> float:
+        if (doc, chunk) not in relevance:
+            relevance[doc, chunk] = _dot(
+                query_unit, _unit(chunks[doc][chunk].get("embedding"))
+            )
+        return relevance[doc, chunk]
 
-    blocks: list[tuple[str, list[dict[str, Any]]]] = []
-    for old, new in pairs:
+    # (text, [(doc, chunk)], relevance)
+    blocks: list[tuple[str, list[tuple[int, int]], float]] = []
+    for (old, old_chunk), (new, new_chunk) in pairs:
         blocks.append(
             (
-                f"[changed]\n{name_a}: {old['text']}\n{name_b}: {new['text']}",
-                [old, new],
+                f"[changed]\n{name_a}: {old}\n{name_b}: {new}",
+                [(0, old_chunk), (1, new_chunk)],
+                max(score(0, old_chunk), score(1, new_chunk)),
             )
         )
-    blocks.extend((f"[only in {name_b}] {c['text']}", [c]) for c in added)
-    blocks.extend((f"[only in {name_a}] {c['text']}", [c]) for c in removed)
+    blocks.extend(
+        (f"[only in {name_b}] {text}", [(1, chunk)], score(1, chunk))
+        for text, chunk in added
+    )
+    blocks.extend(
+        (f"[only in {name_a}] {text}", [(0, chunk)], score(0, chunk))
+        for text, chunk in removed
+    )
+    blocks.sort(key=lambda block: (len(block[0]) >= _SUBSTANTIAL, block[2]), reverse=True)
 
     shown: list[str] = []
     sources: list[dict[str, Any]] = []
+    cited: set[tuple[int, int]] = set()
     used = 0
-    for text, block_chunks in blocks:
-        if shown and used + len(text) > budget:
-            break
+    for text, origins, _relevance in blocks:
+        if used + len(text) > budget:
+            if shown:
+                continue  # a shorter difference further down may still fit
+            text = text[:budget]
         shown.append(text)
         used += len(text)
-        sources.extend(
-            {"text": c["text"], "metadata": c.get("metadata") or {}, "score": 0.0}
-            for c in block_chunks
-        )
+        for doc, chunk in origins:
+            if (doc, chunk) not in cited:
+                cited.add((doc, chunk))
+                source = chunks[doc][chunk]
+                sources.append(
+                    {
+                        "text": source["text"],
+                        "metadata": source.get("metadata") or {},
+                        "score": score(doc, chunk),
+                    }
+                )
 
     totals = (
-        f"{len(shared)} identical parts, {len(pairs)} changed, "
-        f"{len(added)} only in {name_b}, {len(removed)} only in {name_a}"
+        f"{len(pairs)} passages changed, {len(added)} only in {name_b}, "
+        f"{len(removed)} only in {name_a}"
     )
     header = (
-        "Comparison of two documents that share most of their text:\n"
+        "Comparison of two documents that share most of their text. "
+        "Everything they share was left out; below are the differences.\n"
         f"- {_describe(entries[0])}\n- {_describe(entries[1])}\n"
         f"Totals: {totals}."
     )
     notice = f"Compared {name_a} and {name_b}: {totals}."
     if len(shown) < len(blocks):
-        partial = f" Showing {len(shown)} of {len(blocks)} differences."
+        partial = (
+            f" Showing {len(shown)} of {len(blocks)} differences (the ones "
+            "closest to the question)."
+        )
         header += partial
         notice += partial
     if not blocks:

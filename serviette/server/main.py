@@ -113,6 +113,13 @@ class _IndexChangeTracker:
         return stats
 
 
+# Appended to a response's ``notice`` when the request ran into
+# rag.documents.max_request_chars.
+_BUDGET_NOTICE = (
+    " The request reached its LLM budget (rag.documents.max_request_chars), "
+    "so part of the material was left out."
+)
+
 # How often the server itself polls the backend for changes, so deletions
 # are stamped even while no chat page is open. Matches the page's own poll.
 _INDEX_POLL_SECONDS = 5.0
@@ -357,12 +364,15 @@ def create_app(
                 detail="The /rag endpoint requires an 'llm' config section.",
             )
         catalog = await _catalog() if document_mode else []
+        # One ceiling for everything this request sends to the LLM, across
+        # all of its calls (see docmode.Budget).
+        budget = docmode.Budget(documents.max_request_chars) if catalog else None
         if catalog:
             # A file named outright needs no search to find it — and a search
             # would not find it anyway: chunk texts do not carry file names.
             named = docmode.mentioned_names(req.query, catalog)
             if named:
-                return await _answer_documents(req.query, catalog, named)
+                return await _answer_documents(req.query, catalog, named, budget)
         if adaptive is None and not catalog:
             hits = await _search(req.query, req.k)
             answer = await llm.complete(req.query, [h["text"] for h in hits])
@@ -394,13 +404,16 @@ def create_app(
         k = req.k
         queries = await _queries(req.query)
         arbitrated = False
+        answer, hits = no_answer, []
         for _iteration in range(adaptive.max_iterations if adaptive else 1):
-            hits = await _search(req.query, k, queries)
-            answer = await llm.complete(
-                req.query,
-                docmode.labeled(hits) if label_sources else [h["text"] for h in hits],
-                system_prompt=system_prompt,
+            found = await _search(req.query, k, queries)
+            context = (
+                docmode.labeled(found) if label_sources else [h["text"] for h in found]
             )
+            attempt = await _complete(budget, req.query, context, system_prompt)
+            if attempt is None:
+                break  # out of budget: keep the previous attempt's outcome
+            answer, hits = attempt[0], found[: len(attempt[1])]
             if no_answer not in answer:
                 break
             if catalog and not arbitrated:
@@ -410,15 +423,17 @@ def create_app(
                 # The switch is one-way and happens at most once.
                 arbitrated = True
                 route = await docmode.arbitrate(
-                    llm, req.query, catalog, documents.max_listed_documents
+                    llm, req.query, catalog, documents.max_listed_documents, budget
                 )
                 if route.mode == "catalog":
-                    return await _answer_catalog(req.query, catalog)
+                    return await _answer_catalog(req.query, catalog, budget)
                 if route.mode == "documents":
-                    return await _answer_documents(req.query, catalog, route.files)
+                    return await _answer_documents(
+                        req.query, catalog, route.files, budget
+                    )
             if adaptive is None:
                 break
-            if len(hits) < k:
+            if len(found) < k:
                 # Retrieval returned less than asked: the corpus (or the
                 # candidate pool) is exhausted, so a larger k would hand the
                 # LLM the very same context again. Stop instead of repeating
@@ -430,11 +445,32 @@ def create_app(
             notice = (
                 f"No answer was found in the {len(catalog)} indexed documents."
             )
+            if budget is not None and budget.exhausted:
+                notice += _BUDGET_NOTICE
         return RagResponse(
             answer=answer,
             sources=[RetrieveResult(**h) for h in hits],
             notice=notice,
         )
+
+    async def _complete(
+        budget: docmode.Budget | None,
+        query: str,
+        context: list[str],
+        system_prompt: str | None,
+    ) -> tuple[str, list[str]] | None:
+        """One answering call within the request's budget: the reply and the
+        context it was actually given (trailing items are dropped when the
+        budget is short), or ``None`` when nothing useful fits any more."""
+
+        assert llm is not None
+        if budget is not None:
+            fitted = budget.fit(len(system_prompt or "") + len(query), context)
+            if fitted is None:
+                return None
+            context = fitted
+        reply = await llm.complete(query, context, system_prompt=system_prompt)
+        return reply, context
 
     async def _catalog() -> list[dict[str, Any]]:
         """The document catalog, or ``[]`` when it cannot be had right now —
@@ -448,28 +484,34 @@ def create_app(
             return []
 
     async def _answer_catalog(
-        query: str, catalog: list[dict[str, Any]]
+        query: str, catalog: list[dict[str, Any]], budget: docmode.Budget | None
     ) -> RagResponse:
-        assert llm is not None
         context = docmode.catalog_context(catalog, documents.max_context_chars)
-        answer = await llm.complete(
-            query, context, system_prompt=docmode.CATALOG_SYSTEM_PROMPT
+        reply = await _complete(
+            budget, query, context, docmode.CATALOG_SYSTEM_PROMPT
         )
-        return RagResponse(answer=answer, sources=[], mode="catalog")
+        if reply is None:
+            # Out of budget: the totals are the system's own and stand alone.
+            return RagResponse(
+                answer=context[0], sources=[], mode="catalog", notice=_BUDGET_NOTICE.strip()
+            )
+        return RagResponse(answer=reply[0], sources=[], mode="catalog")
 
-    async def _unresolved(query: str, facts: str) -> RagResponse:
+    async def _unresolved(
+        query: str, facts: str, budget: docmode.Budget | None
+    ) -> RagResponse:
         """The question cannot be answered as asked: say why, concretely.
         The facts are computed here; the LLM only words them in the user's
         language, and they stand on their own if it fails to."""
 
-        assert llm is not None
         try:
-            answer = await llm.complete(
-                query, [facts], system_prompt=docmode.EXPLAIN_SYSTEM_PROMPT
+            reply = await _complete(
+                budget, query, [facts], docmode.EXPLAIN_SYSTEM_PROMPT
             )
         except Exception:  # noqa: BLE001 - the facts are the answer then
             logger.warning("could not word a document-mode error; sending facts")
-            answer = ""
+            reply = None
+        answer = reply[0] if reply else ""
         return RagResponse(
             answer=answer.strip() or facts,
             sources=[],
@@ -478,7 +520,10 @@ def create_app(
         )
 
     async def _answer_documents(
-        query: str, catalog: list[dict[str, Any]], names: list[str]
+        query: str,
+        catalog: list[dict[str, Any]],
+        names: list[str],
+        budget: docmode.Budget | None,
     ) -> RagResponse:
         """Answer from whole named documents: one is read (in full, or its
         parts closest to the question), several are compared."""
@@ -513,7 +558,7 @@ def create_app(
                 )
             ]
         if problems:
-            return await _unresolved(query, " ".join(problems))
+            return await _unresolved(query, " ".join(problems), budget)
 
         entries = resolution.found
         chunks = [
@@ -527,14 +572,14 @@ def create_app(
         ]
         if gone:
             return await _unresolved(
-                query, f"No longer in the index: {', '.join(gone)}."
+                query, f"No longer in the index: {', '.join(gone)}.", budget
             )
         query_embedding = await embedder.embed(query_prefix + query)
-        budget = documents.max_context_chars
+        limit = documents.max_context_chars
         if len(entries) == 1:
             mode, system_prompt = "document", docmode.DOCUMENT_SYSTEM_PROMPT
             built = docmode.single_document_context(
-                entries[0], chunks[0], query_embedding, budget
+                entries[0], chunks[0], query_embedding, limit
             )
         else:
             import asyncio
@@ -542,15 +587,20 @@ def create_app(
             mode, system_prompt = "compare", docmode.COMPARE_SYSTEM_PROMPT
             # Pairing changed passages is CPU-bound; keep it off the loop.
             built = await asyncio.to_thread(
-                docmode.compare_context, entries, chunks, query_embedding, budget
+                docmode.compare_context, entries, chunks, query_embedding, limit
             )
-        answer = await llm.complete(query, built.context, system_prompt=system_prompt)
+        reply = await _complete(budget, query, built.context, system_prompt)
+        notice = built.notice
+        if reply is None or len(reply[1]) < len(built.context):
+            notice = (notice or "") + _BUDGET_NOTICE
         return RagResponse(
-            answer=answer,
+            # Out of budget: the header (what was read, the exact totals) is
+            # the system's own and stands alone.
+            answer=reply[0] if reply else built.context[0],
             sources=[RetrieveResult(**h) for h in built.sources],
             mode=mode,
             documents=[str(entry["id"]) for entry in entries],
-            notice=built.notice,
+            notice=notice.strip() if notice else None,
         )
 
     async def stats() -> dict[str, Any]:

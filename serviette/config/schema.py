@@ -558,7 +558,8 @@ class DocumentsConfig(BaseModel):
     only when the LLM reports no answer does one short extra call decide
     between searching wider (``rag.adaptive``) and answering from the
     document catalog or from whole documents. Every step is bounded by
-    ``max_context_chars``, whatever the size of the documents.
+    ``max_context_chars`` and the whole request by ``max_request_chars``,
+    whatever the size of the documents.
 
     While enabled, the ``/rag`` system prompt carries the no-answer
     instruction ``rag.adaptive`` uses (that reply is what triggers the extra
@@ -580,6 +581,12 @@ class DocumentsConfig(BaseModel):
     # Upper bound, in characters, on the document material one answering
     # call sees (a whole document, a comparison, or the catalog listing).
     max_context_chars: int = Field(default=24_000, ge=1_000)
+    # Upper bound, in characters, on everything one /rag request sends to
+    # the LLM across all of its calls (search attempts incl. the adaptive
+    # loop, routing, the answer). A call that does not fit is cut down to
+    # what is left; when nothing useful fits, no further call is made and
+    # the response says so in ``notice``. About 4 characters per token.
+    max_request_chars: int = Field(default=100_000, ge=2_000)
     # How many document names the routing call is shown.
     max_listed_documents: int = Field(default=200, ge=1)
 

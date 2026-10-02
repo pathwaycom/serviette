@@ -286,9 +286,11 @@ answer is not found.
   file goes straight to that file; any other question is searched as usual,
   and only if that finds nothing does one short LLM call decide between a
   wider search and the catalog or the named documents. Two files that share
-  most of their text are compared as a diff computed by the server, so the
-  model reads only what changed. Every step has a fixed context budget, and
-  when a file cannot be identified the answer says which names were close.
+  most of their text are compared as a line-level diff computed by the
+  server, so the model reads only what changed — however the files were
+  chunked. Every step has a fixed context budget and the request as a whole
+  a ceiling (`max_request_chars`); when a file cannot be identified the
+  answer says which names were close.
   Not available on Pinecone, which cannot enumerate documents.
 
 The reranker and the multi-step strategies (adaptive, decompose) are

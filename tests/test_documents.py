@@ -313,13 +313,14 @@ def test_two_versions_are_compared_as_a_diff(store_path, mock_server_embedder):
     assert body["documents"] == ["/docs/law_2023.txt", "/docs/law_2024.txt"]
     assert len(llm.calls) == 1 and llm.raw_prompts == []
     header, *blocks = llm.calls[0]["context"]
-    totals = "6 identical parts, 1 changed, 1 only in law_2024.txt, 0 only in law_2023.txt"
+    totals = "1 passages changed, 1 only in law_2024.txt, 0 only in law_2023.txt"
     assert totals in header and totals in body["notice"]
     # Only the differences reach the model — none of the shared articles.
     assert len(blocks) == 2
-    assert blocks[0].startswith("[changed]")
-    assert "30 days" in blocks[0] and "14 days" in blocks[0]
-    assert blocks[1].startswith("[only in law_2024.txt]") and "appeals" in blocks[1]
+    changed = next(b for b in blocks if b.startswith("[changed]"))
+    assert "30 days" in changed and "14 days" in changed
+    added = next(b for b in blocks if b.startswith("[only in law_2024.txt]"))
+    assert "appeals" in added
     assert not any("Unchanged provision" in block for block in blocks)
 
 
@@ -327,16 +328,90 @@ def test_diff_larger_than_the_budget_reports_what_is_shown():
     entries = [
         {"id": f"/docs/{name}", "metadata": {}, "chunks": 40} for name in ("a.txt", "b.txt")
     ]
-    shared = [{"text": f"same {i}", "metadata": {}} for i in range(30)]
+    shared = [{"text": f"the same paragraph number {i}", "metadata": {}} for i in range(30)]
     only_b = [{"text": f"new {i} " + "y" * 300, "metadata": {}} for i in range(10)]
     built = docmode.compare_context(
         entries, [shared, shared + only_b], fake_embedding("q"), budget=1_000
     )
-    assert "30 identical parts, 0 changed, 10 only in b.txt" in built.notice
+    assert "0 passages changed, 10 only in b.txt, 0 only in a.txt" in built.notice
     shown = len(built.context) - 1
     assert 0 < shown < 10
-    assert f"Showing {shown} of 10 differences." in built.notice
+    assert f"Showing {shown} of 10 differences" in built.notice
     assert sum(len(block) for block in built.context[1:]) <= 1_000
+
+
+def _windows(text: str, size: int) -> list[dict]:
+    """Chunk ``text`` the way a token-window splitter does: fixed-size
+    overlapping pieces that ignore line boundaries."""
+
+    return [
+        {"text": text[i : i + size], "metadata": {}}
+        for i in range(0, len(text), size // 2)
+    ]
+
+
+def test_versions_are_recognized_across_shifted_chunks_and_extraction_noise():
+    """Real versions never share whole chunks: an insertion shifts every
+    later window, and two PDFs of one text extract with different spacing,
+    soft hyphens and page headers. The diff must still be the actual edits."""
+
+    paragraphs = [
+        f"Section {i}. The classification of substance number {i} follows annex {i}."
+        for i in range(60)
+    ]
+    old = "\n".join(
+        [f"02008R1272 - FR - 01.05.2026 - 029.001 - {n}\n{p}" for n, p in enumerate(paragraphs)]
+    )
+    edited = list(paragraphs)
+    edited[40] = edited[40].replace("follows annex 40", "follows the new annex 41")
+    edited.insert(3, "Section 2a. A wholly new provision on digital labelling is inserted.")
+    new = "\n".join(
+        [
+            f"02008R1272 - FR - 01.01.2027 - 032.001 - {n}\n{p}"
+            for n, p in enumerate(edited)
+        ]
+    )
+    # the newer file extracts with a soft hyphen and doubled spaces
+    new = new.replace("classification", "classi\u00adfication").replace(" of ", "  of ")
+
+    entries = [{"id": f"/docs/{n}", "metadata": {}, "chunks": 1} for n in ("old.pdf", "new.pdf")]
+    chunks = [_windows(old, 500), _windows(new, 500)]
+    assert not {c["text"] for c in chunks[0]} & {c["text"] for c in chunks[1]}
+
+    built = docmode.compare_context(entries, chunks, fake_embedding("q"), budget=10_000)
+    assert "share most of their text" in built.context[0]
+    body = "\n".join(built.context[1:])
+    assert "digital labelling" in body
+    assert "follows the new annex 41" in body
+    # page headers and untouched sections are not differences
+    assert "029.001" not in body and "032.001" not in body
+    assert "substance number 7 " not in body
+
+
+def test_request_budget_caps_everything_sent_to_the_llm(store_path, mock_server_embedder):
+    """max_request_chars bounds the request as a whole: the adaptive loop
+    stops growing once the next attempt no longer fits."""
+
+    llm = _ScriptedLLM(route="MODE: search")
+    rag = RagConfig(
+        adaptive={"factor": 2, "max_iterations": 4},
+        documents={"max_request_chars": 2_000},
+    )
+    body = _ask(store_path, mock_server_embedder, llm, "who?", rag=rag, k=1)
+    sent = sum(
+        len(c["system_prompt"] or "") + sum(map(len, c["context"])) for c in llm.calls
+    ) + sum(map(len, llm.raw_prompts))
+    assert sent <= 2_000
+    assert len(llm.calls) < 4
+    assert "LLM budget" in body["notice"]
+
+
+def test_budget_fit_trims_then_refuses():
+    budget = docmode.Budget(1_000)
+    assert budget.fit(100, ["a" * 300, "b" * 300, "c" * 400]) == ["a" * 300, "b" * 300]
+    assert budget.exhausted and budget.left == 300
+    assert budget.fit(100, ["d" * 300]) is None
+    assert not budget.take(400) and budget.take(300)
 
 
 def test_unrelated_documents_share_the_budget(store_path, mock_server_embedder):
