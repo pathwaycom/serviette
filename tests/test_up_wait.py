@@ -294,3 +294,104 @@ def test_server_probe_ignores_the_environment_proxy(monkeypatch):
             assert up._server_ready(config) is True
         finally:
             httpd.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Failing before the children start, and reporting a child's death
+# ---------------------------------------------------------------------------
+
+
+def _openai_config(tmp_path, **overrides):
+    docs = tmp_path / "docs"
+    docs.mkdir(exist_ok=True)
+    data = {
+        "sources": [{"type": "fs", "path": str(docs)}],
+        "vector_db": {"type": "duckdb", "path": str(tmp_path / "e.duckdb")},
+        "embedder": {"type": "openai"},
+        **overrides,
+    }
+    return ServietteConfig.model_validate(data)
+
+
+def test_up_refuses_openai_sections_without_a_key(tmp_path, monkeypatch):
+    """No api_key in the config and no OPENAI_API_KEY: say so before any
+    child starts, naming the sections, instead of the indexer dying on the
+    SDK's traceback after "indexing in progress"."""
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    spawned: list = []
+    monkeypatch.setattr(up, "_spawn", lambda *a, **k: spawned.append(a))
+    cfg = _openai_config(tmp_path, llm={"type": "openai"})
+    with pytest.raises(SystemExit) as exc:
+        up.run(cfg, str(tmp_path / "config.yaml"))
+    message = str(exc.value)
+    assert "embedder (type: openai)" in message and "llm (type: openai)" in message
+    assert "OPENAI_API_KEY" in message
+    assert spawned == []
+
+    # A key in either place satisfies the check.
+    from serviette.config.schema import missing_openai_credentials
+
+    assert missing_openai_credentials(
+        _openai_config(tmp_path, embedder={"type": "openai", "api_key": "sk-x"}), roles=("embedder",)
+    ) == []
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    assert missing_openai_credentials(cfg, roles=("embedder", "llm")) == []
+    # Non-OpenAI sections are never asked for it.
+    monkeypatch.delenv("OPENAI_API_KEY")
+    assert missing_openai_credentials(
+        _openai_config(tmp_path, embedder={"type": "sentence_transformer"}), roles=("embedder", "llm")
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "tail, expected",
+    [
+        (["openai.OpenAIError: Missing credentials. Please pass an `api_key`"], "no OpenAI API key"),
+        (["openai.RateLimitError: Error code: 429 - {'error': {'message': 'Rate limit reached"], "rate limit (HTTP 429)"),
+        (["openai.RateLimitError: Error code: 429 - You exceeded your current quota"], "no remaining quota"),
+        (["OSError: [Errno 98] error while attempting to bind on address ('127.0.0.1', 8989): address already in use"], "port is already taken"),
+        (["milvus_lite.exceptions.DataDirLockedError: another process holds the lock"], "locked by another process"),
+        (["pathway.engine.EngineError: error sending request for url (http://127.0.0.1:8080/v1/batch/objects)"], "could not be reached"),
+        (["something nobody has seen before"], "last traceback above says why"),
+        ([], "last traceback above says why"),
+    ],
+)
+def test_failure_report_names_the_cause(tail, expected):
+    report = up._failure_report("indexer", 1, tail)
+    assert "serviette up STOPPED: the indexer exited with code 1." in report
+    assert expected in report
+    # Unmistakable: framed and preceded by a blank line, so it never reads
+    # as one more INFO line from the engine.
+    assert report.startswith("\n" + "=" * 72)
+    assert report.rstrip().endswith("=" * 72)
+
+
+def test_spawned_child_output_is_forwarded_and_kept(monkeypatch, capsys):
+    """A child's output reaches the terminal line by line and its last lines
+    stay available for the failure report."""
+
+    import time
+
+    real_popen = up.subprocess.Popen
+    monkeypatch.setattr(up.subprocess, "Popen", lambda args, **kw: _real_popen(real_popen, args, **kw))
+    proc = up._spawn("indexer", "config.yaml")  # _real_popen ignores the command
+    code = proc.wait(timeout=30)
+    for _ in range(100):
+        if len(proc.tail) >= 3:
+            break
+        time.sleep(0.05)
+    assert code == 3
+    assert list(proc.tail)[-3:] == ["line one", "line two", "Traceback: boom"]
+    assert "Traceback: boom" in capsys.readouterr().err
+
+
+def _real_popen(popen, args, **kw):
+    """Run a tiny script in place of `serviette <command>`: prints three
+    lines (two to stdout, one to stderr) and exits 3."""
+
+    script = (
+        "import sys; print('line one'); print('line two');"
+        " print('Traceback: boom', file=sys.stderr); sys.exit(3)"
+    )
+    return popen([args[0], "-c", script], **kw)

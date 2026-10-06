@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 
-from serviette.config.schema import require_source_dirs
+from serviette.config.schema import require_openai_credentials, require_source_dirs
 from serviette.indexer.config import load_indexer_config
 from serviette.indexer.graph import run_indexer
 
@@ -116,6 +116,7 @@ def main(argv: list[str] | None = None) -> None:
     # A mistyped folder must stop here with a plain message, not become an
     # empty index (the fs connector watches a missing path without complaint).
     require_source_dirs(config)
+    require_openai_credentials(config, roles=("embedder",))
 
     inside_spawn = "PATHWAY_PROCESS_ID" in os.environ
     if config.indexer.workers > 1 and not inside_spawn:

@@ -881,6 +881,44 @@ def require_multi_process_backend(config: ServietteConfig) -> None:
         )
 
 
+def missing_openai_credentials(config: ServietteConfig, *, roles: tuple[str, ...]) -> list[str]:
+    """The ``openai``-typed sections among ``roles`` (``"embedder"``, ``"llm"``)
+    that have no ``api_key`` and cannot fall back on ``OPENAI_API_KEY``."""
+
+    if os.environ.get("OPENAI_API_KEY"):
+        return []
+    missing = []
+    for role in roles:
+        section = getattr(config, role, None)
+        if section is not None and section.type == "openai" and not section.api_key:
+            missing.append(role)
+    return missing
+
+
+def require_openai_credentials(config: ServietteConfig, *, roles: tuple[str, ...]) -> None:
+    """Abort with a plain message when an OpenAI section has no key to use.
+
+    Without this the key is first needed deep inside a child process: the
+    indexer dies on the SDK's ``Missing credentials`` traceback after
+    ``up`` has already announced "indexing in progress", and the server
+    answers its first ``/rag`` with a 500. Checked by the engine-facing
+    commands before any work starts; ``roles`` says which sections the
+    command actually uses (the indexer embeds, the server embeds and chats).
+    """
+
+    missing = missing_openai_credentials(config, roles=roles)
+    if not missing:
+        return
+    listed = ", ".join(f"{role} (type: openai)" for role in missing)
+    raise SystemExit(
+        f"OpenAI API key missing for: {listed}.\n"
+        "Export it before starting (`export OPENAI_API_KEY=sk-...`) or set "
+        "`api_key` in those config sections. To run without OpenAI, switch the "
+        "embedder to `sentence_transformer` (free, local) and drop or change "
+        "the `llm` section."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Loading + ${ENV_VAR} interpolation
 # ---------------------------------------------------------------------------

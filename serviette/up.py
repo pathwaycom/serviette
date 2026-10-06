@@ -31,6 +31,7 @@ import time
 from serviette.config.schema import (
     ServietteConfig,
     require_multi_process_backend,
+    require_openai_credentials,
     require_source_dirs,
 )
 
@@ -40,13 +41,135 @@ _POLL_INTERVAL = 0.3
 _TERM_GRACE = 10.0
 
 
+# How many of a child's last output lines are kept for the failure report.
+_TAIL_LINES = 80
+
+
 def _spawn(
     command: str, config_path: str, *, env: dict[str, str] | None = None
 ) -> subprocess.Popen:
-    return subprocess.Popen(
+    """Start a child whose output passes through ``up``.
+
+    The output still reaches the terminal line by line, but ``up`` keeps the
+    last lines (``proc.tail``) so that, when the child dies, the report can
+    name the cause instead of leaving the user to find the right traceback
+    among the engine's INFO lines. ``PYTHONUNBUFFERED`` keeps the child from
+    block-buffering now that its stdout is a pipe.
+    """
+
+    import os
+    import threading
+    from collections import deque
+
+    proc = subprocess.Popen(
         [sys.executable, "-m", "serviette.cli", command, "--config", config_path],
-        env=env,
+        env={**(env if env is not None else os.environ), "PYTHONUNBUFFERED": "1"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
     )
+    tail: deque[str] = deque(maxlen=_TAIL_LINES)
+
+    def forward() -> None:
+        assert proc.stdout is not None
+        for line in iter(proc.stdout.readline, ""):
+            tail.append(line.rstrip("\n"))
+            sys.stderr.write(line)
+            sys.stderr.flush()
+
+    threading.Thread(target=forward, name=f"up-{command}-output", daemon=True).start()
+    proc.tail = tail  # type: ignore[attr-defined]
+    return proc
+
+
+# Known ways a child dies, matched against its last output lines: the
+# cause named for the user, and what to do about it.
+_FAILURE_HINTS: list[tuple[str, str, str]] = [
+    (
+        r"Missing credentials|OPENAI_API_KEY",
+        "no OpenAI API key was available",
+        "export OPENAI_API_KEY=sk-... (or set api_key in the config section) and start again.",
+    ),
+    (
+        r"insufficient_quota|exceeded your current quota",
+        "the OpenAI account has no remaining quota",
+        ("check billing at https://platform.openai.com, or switch the embedder to "
+        "sentence_transformer (free, local)."),
+    ),
+    (
+        r"Error code: 429|RateLimitError|rate_limit_exceeded",
+        ("OpenAI rate limit (HTTP 429) while embedding — the indexer stops at the "
+        "first failed batch"),
+        ("start again (persistence resumes from what was already processed); to stay "
+        "under the limit index the folder in parts or lower indexer.workers."),
+    ),
+    (
+        r"Error code: 401|AuthenticationError|Incorrect API key",
+        "the OpenAI API key was rejected",
+        "check OPENAI_API_KEY / api_key in the config.",
+    ),
+    (
+        r"address already in use",
+        "the server port is already taken",
+        "stop the other process or change server.port.",
+    ),
+    (
+        r"DataDirLockedError|another process holds the lock",
+        "the embedded database file is locked by another process",
+        "stop the other serviette/Milvus process, or use a database server.",
+    ),
+    (
+        r"license",
+        "the Pathway license key is missing or invalid",
+        ("get a free key at https://pathway.com/framework/get-license and export "
+        "PATHWAY_LICENSE_KEY."),
+    ),
+    (
+        (r"Connection refused|error sending request|ConnectError|Failed to connect|"
+        r"Name or service not known"),
+        "a network service (the vector database or an API) could not be reached",
+        "check that it is running and that host/port in the config are right.",
+    ),
+]
+
+
+def _failure_report(name: str, code: int, tail: list[str] | None) -> str:
+    """The block printed when a child dies: unmistakable, with the cause
+    recognised from the child's last lines where possible."""
+
+    import re
+
+    cause = advice = None
+    if tail:
+        text = "\n".join(tail)
+        for pattern, hint_cause, hint_advice in _FAILURE_HINTS:
+            if re.search(pattern, text, re.IGNORECASE):
+                cause, advice = hint_cause, hint_advice
+                break
+    lines = [
+        "",
+        "=" * 72,
+        f"serviette up STOPPED: the {name} exited with code {code}.",
+    ]
+    if cause:
+        lines.append(f"Cause: {cause}.")
+        lines.append(f"What to do: {advice}")
+    else:
+        lines.append(
+            f"The {name}'s last traceback above says why; the lines before it "
+            "are routine engine output."
+        )
+    lines.append("=" * 72)
+    return "\n".join(lines)
+
+
+def _report_exit(name: str, code: int, proc: subprocess.Popen) -> None:
+    import time as _time
+
+    # Give the forwarding thread a moment to drain the child's last lines.
+    _time.sleep(0.2)
+    logger.error(_failure_report(name, code, list(getattr(proc, "tail", None) or [])))
 
 
 def _confirm_fingerprint(config: ServietteConfig) -> dict[str, str]:
@@ -337,6 +460,9 @@ def run(config: ServietteConfig, config_path: str) -> int:
     # two processes (Milvus Lite): started anyway, the indexer dies on the
     # file lock our own readiness probe holds.
     require_multi_process_backend(config)
+    # The indexer would die on the SDK's "Missing credentials" traceback
+    # seconds after "indexing in progress", the server on its first request.
+    require_openai_credentials(config, roles=("embedder", "llm"))
     _warn_duckdb_streaming(config)
 
     indexer = _spawn("indexer", config_path, env=_confirm_fingerprint(config))
@@ -360,9 +486,7 @@ def run(config: ServietteConfig, config_path: str) -> int:
             config, indexer, should_stop=lambda: shutdown_requested
         )
         if failed is not None:
-            logger.error(
-                "up: indexer exited with code %d before the index was ready", failed
-            )
+            _report_exit("indexer", failed, indexer)
             return failed
         if shutdown_requested:
             logger.info("up: shutting down")
@@ -378,9 +502,9 @@ def run(config: ServietteConfig, config_path: str) -> int:
         )
         if failed is not None:
             if server.poll() is not None:
-                logger.error("up: server exited with code %d before it was ready", failed)
+                _report_exit("server", failed, server)
             else:
-                logger.error("up: indexer exited with code %d", failed)
+                _report_exit("indexer", failed, indexer)
             return failed
         if shutdown_requested:
             logger.info("up: shutting down")
@@ -394,12 +518,12 @@ def run(config: ServietteConfig, config_path: str) -> int:
 
             server_code = server.poll()
             if server_code is not None:
-                logger.error("up: server exited with code %d", server_code)
+                _report_exit("server", server_code, server)
                 return server_code
 
             indexer_code = indexer.poll()
             if indexer_code is not None and indexer_code != 0:
-                logger.error("up: indexer exited with code %d", indexer_code)
+                _report_exit("indexer", indexer_code, indexer)
                 return indexer_code
             if indexer_code == 0 and not static_done_logged:
                 # Static sources: one-shot indexing done; keep serving.

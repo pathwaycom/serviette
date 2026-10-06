@@ -648,6 +648,12 @@ def run(config: ServietteConfig) -> None:
 
     import uvicorn
 
+    from serviette.config.schema import require_openai_credentials
+
+    # The embedder is needed on the first /retrieve and the LLM on the first
+    # /rag: without a key both would fail as a 500 then. Say it now instead.
+    require_openai_credentials(config, roles=("embedder", "llm"))
+
     # uvicorn configures only its own loggers; without a root handler the
     # warm-up progress above is silently dropped and the user stares at
     # "Waiting for application startup." for as long as the model loads.

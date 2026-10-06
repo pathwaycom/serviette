@@ -53,6 +53,20 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command in ("indexer", "up", "demo"):
         _ensure_pathway_connectors()
+    # Every subcommand but quickstart loads a config; the import is here
+    # rather than at module level to keep `--version` free of pydantic.
+    from serviette.config.schema import MissingEnvVarError
+
+    try:
+        _dispatch(args.command, rest)
+    except MissingEnvVarError as exc:
+        # A config referencing an unset ${VAR} is a user error with a known
+        # fix, not a crash: say it plainly instead of printing a traceback.
+        raise SystemExit(str(exc)) from None
+
+
+def _dispatch(command: str, rest: list[str]) -> None:
+    args = argparse.Namespace(command=command)
     if args.command == "indexer":
         from serviette.indexer.main import main as indexer_main
 

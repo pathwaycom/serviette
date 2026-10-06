@@ -77,6 +77,16 @@ serviette server --config config.yaml     # open http://localhost:8989
 serviette frontend --config config.yaml   # open http://localhost:3000
 ```
 
+`indexer`, `server` and `up` check the obvious mistakes before starting
+anything: a source folder that does not exist, a `${VAR}` in the config that
+is not exported, an `openai`-typed embedder or `llm` with no key in the config
+or in `OPENAI_API_KEY`, a backend that cannot be shared by two processes. Each
+stops with a one-paragraph message, not a traceback. If the indexer or the
+server dies later, `serviette up` ends with a framed `serviette up STOPPED`
+block that names the cause when it recognises it (missing or rejected API
+key, OpenAI rate limit or quota, a port already in use, an unreachable
+database) and what to do; the engine's own log lines stay above it.
+
 Query the API (versioned under `/api/v1`; the pre-versioning `/retrieve`,
 `/rag` and `/health` paths still work as deprecated aliases):
 
