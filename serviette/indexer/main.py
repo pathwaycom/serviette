@@ -135,7 +135,13 @@ def main(argv: list[str] | None = None) -> None:
         # A signal-terminated spawner reports -N; exit 128+N like a shell would.
         raise SystemExit(128 - code if code < 0 else code)
 
-    run_indexer(config, prepare=not inside_spawn)
+    try:
+        run_indexer(config, prepare=not inside_spawn)
+    except KeyboardInterrupt:
+        # Ctrl-C reaches the indexer together with `serviette up` (same
+        # process group): a deliberate stop, not an error — no traceback.
+        logging.getLogger(__name__).info("indexer: stopped")
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":

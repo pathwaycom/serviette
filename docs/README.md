@@ -85,7 +85,14 @@ stops with a one-paragraph message, not a traceback. If the indexer or the
 server dies later, `serviette up` ends with a framed `serviette up STOPPED`
 block that names the cause when it recognises it (missing or rejected API
 key, OpenAI rate limit or quota, a port already in use, an unreachable
-database) and what to do; the engine's own log lines stay above it.
+database) and what to do.
+
+By default `serviette up` shows only its own progress, warnings, errors and
+the URL to open; the indexer's and the server's routine INFO lines (the
+engine's persistence and connector monitoring, one line per HTTP request)
+are hidden. `serviette up --verbose` passes them all through. The hidden
+lines are still kept for the `STOPPED` report, so a diagnosis never depends
+on the flag.
 
 Query the API (versioned under `/api/v1`; the pre-versioning `/retrieve`,
 `/rag` and `/health` paths still work as deprecated aliases):

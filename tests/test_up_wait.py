@@ -215,7 +215,7 @@ def test_fingerprint_is_confirmed_by_up_before_the_indexer_starts(tmp_path, monk
 
     monkeypatch.setattr("serviette.indexer.fingerprint.check_fingerprint", fake_check)
 
-    def fake_spawn(command, config_path, *, env=None):
+    def fake_spawn(command, config_path, *, env=None, verbose=False):
         events.append((command, env))
         # indexer keeps running; the server "exits 0" so run() returns.
         return FakeProc([None]) if command == "indexer" else FakeProc([0])
@@ -395,3 +395,49 @@ def _real_popen(popen, args, **kw):
         " print('Traceback: boom', file=sys.stderr); sys.exit(3)"
     )
     return popen([args[0], "-c", script], **kw)
+
+
+@pytest.mark.parametrize(
+    "line, routine",
+    [
+        ("INFO:pathway_engine.persistence.input_snapshot:Persisting a chunk of 50 entries", True),
+        ("INFO up: indexing in progress", True),
+        ("INFO:     127.0.0.1:33800 - \"POST /api/v1/rag HTTP/1.1\" 200 OK", True),
+        ("Batches: 100%|██████████| 1/1 [00:00<00:00, 24.93it/s]", True),
+        ("", True),
+        ("WARNING:pathway.internals.graph_runner:Received SIGTERM", False),
+        ("ERROR:    [Errno 98] error while attempting to bind on address", False),
+        ("Traceback (most recent call last):", False),
+        ("  File \"/x/y.py\", line 3, in <module>", False),
+        ("openai.OpenAIError: Missing credentials.", False),
+        ("thread 'pathway:output_table-WeaviateWriter' panicked at src/engine/report_error.rs", False),
+        ("INFORMATIVE line from a print()", False),  # a word, not the level prefix
+    ],
+)
+def test_quiet_mode_hides_only_routine_lines(line, routine):
+    assert up._is_routine(line) is routine
+
+
+def test_quiet_mode_keeps_hidden_lines_for_the_failure_report(monkeypatch, capsys):
+    """Hidden INFO lines still land in the tail (the diagnosis needs them);
+    the error line reaches the terminal either way."""
+
+    real_popen = up.subprocess.Popen
+    script = (
+        "import sys; print('INFO:engine:routine'); print('Traceback: boom', file=sys.stderr);"
+        " sys.exit(3)"
+    )
+    monkeypatch.setattr(
+        up.subprocess, "Popen", lambda args, **kw: real_popen([args[0], "-c", script], **kw)
+    )
+    proc = up._spawn("indexer", "config.yaml", verbose=False)
+    proc.wait(timeout=30)
+    import time
+
+    for _ in range(100):
+        if len(proc.tail) >= 2:
+            break
+        time.sleep(0.05)
+    assert list(proc.tail) == ["INFO:engine:routine", "Traceback: boom"]
+    err = capsys.readouterr().err
+    assert "Traceback: boom" in err and "routine" not in err

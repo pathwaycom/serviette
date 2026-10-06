@@ -23,6 +23,7 @@ components separately (see docs/README "Scaling").
 from __future__ import annotations
 
 import logging
+import re
 import signal
 import subprocess
 import sys
@@ -44,17 +45,34 @@ _TERM_GRACE = 10.0
 # How many of a child's last output lines are kept for the failure report.
 _TAIL_LINES = 80
 
+# Routine lines of a child's output, hidden unless ``--verbose``: INFO/DEBUG
+# records of Python logging in either common format ("INFO:name:msg",
+# "INFO msg", uvicorn's "INFO:     msg"), and tqdm progress bars. Everything
+# else — warnings, errors, tracebacks (whose continuation lines are
+# indented), Rust panics, a child's own print() — passes through.
+_ROUTINE_LINE = re.compile(r"^(INFO|DEBUG)\b|^\s*(Batches|Loading weights):\s")
+
+
+def _is_routine(line: str) -> bool:
+    return bool(_ROUTINE_LINE.match(line)) or not line.strip()
+
 
 def _spawn(
-    command: str, config_path: str, *, env: dict[str, str] | None = None
+    command: str,
+    config_path: str,
+    *,
+    env: dict[str, str] | None = None,
+    verbose: bool = True,
 ) -> subprocess.Popen:
     """Start a child whose output passes through ``up``.
 
-    The output still reaches the terminal line by line, but ``up`` keeps the
-    last lines (``proc.tail``) so that, when the child dies, the report can
-    name the cause instead of leaving the user to find the right traceback
-    among the engine's INFO lines. ``PYTHONUNBUFFERED`` keeps the child from
-    block-buffering now that its stdout is a pipe.
+    ``up`` keeps the child's last lines (``proc.tail``) so that, when the
+    child dies, the report can name the cause instead of leaving the user to
+    find the right traceback among the engine's INFO lines. With ``verbose``
+    every line reaches the terminal as it arrives; otherwise only the ones
+    that are not routine (see ``_ROUTINE_LINE``) — the tail keeps them all
+    either way. ``PYTHONUNBUFFERED`` keeps the child from block-buffering now
+    that its stdout is a pipe.
     """
 
     import os
@@ -75,8 +93,9 @@ def _spawn(
         assert proc.stdout is not None
         for line in iter(proc.stdout.readline, ""):
             tail.append(line.rstrip("\n"))
-            sys.stderr.write(line)
-            sys.stderr.flush()
+            if verbose or not _is_routine(line):
+                sys.stderr.write(line)
+                sys.stderr.flush()
 
     threading.Thread(target=forward, name=f"up-{command}-output", daemon=True).start()
     proc.tail = tail  # type: ignore[attr-defined]
@@ -447,8 +466,13 @@ def _wait_for_server(
     return None
 
 
-def run(config: ServietteConfig, config_path: str) -> int:
-    """Supervise the two children; returns the exit code for the CLI."""
+def run(config: ServietteConfig, config_path: str, *, verbose: bool = False) -> int:
+    """Supervise the two children; returns the exit code for the CLI.
+
+    ``verbose`` passes the children's full output through; by default the
+    engine's routine INFO lines are hidden so that ``up``'s own progress and
+    the URL to open stay visible (they are still kept for a failure report).
+    """
 
     config.for_indexer()
     config.for_server()
@@ -465,8 +489,15 @@ def run(config: ServietteConfig, config_path: str) -> int:
     require_openai_credentials(config, roles=("embedder", "llm"))
     _warn_duckdb_streaming(config)
 
-    indexer = _spawn("indexer", config_path, env=_confirm_fingerprint(config))
+    indexer = _spawn(
+        "indexer", config_path, env=_confirm_fingerprint(config), verbose=verbose
+    )
     logger.info("up: indexer started (pid %d)", indexer.pid)
+    if not verbose:
+        logger.info(
+            "up: showing progress, warnings and errors only — run with "
+            "--verbose for the full indexer and server log"
+        )
 
     shutdown_requested = False
 
@@ -492,7 +523,7 @@ def run(config: ServietteConfig, config_path: str) -> int:
             logger.info("up: shutting down")
             return 0
 
-        server = _spawn("server", config_path)
+        server = _spawn("server", config_path, verbose=verbose)
         logger.info("up: index is ready — starting the server (pid %d)", server.pid)
         # The port is not listening until the server's warm-up finishes;
         # announcing the URL before that sends the user to a "connection
@@ -509,7 +540,10 @@ def run(config: ServietteConfig, config_path: str) -> int:
         if shutdown_requested:
             logger.info("up: shutting down")
             return 0
-        logger.info("up: server is ready — open %s", _server_url(config))
+        logger.info(
+            "\n\n  Ready — open %s\n  (Ctrl-C stops the indexer and the server)\n",
+            _server_url(config),
+        )
         static_done_logged = False
         while True:
             if shutdown_requested:
@@ -546,10 +580,16 @@ def main(argv: list[str]) -> None:
 
     parser = argparse.ArgumentParser(prog="serviette up", description=__doc__)
     parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="pass the indexer's and the server's full output through "
+        "(by default routine INFO lines are hidden)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     # The readiness probe goes through httpx, which logs every request at
     # INFO — that would print one line per health poll.
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    sys.exit(run(load_config(args.config), args.config))
+    sys.exit(run(load_config(args.config), args.config, verbose=args.verbose))
