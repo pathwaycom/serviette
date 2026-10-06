@@ -45,6 +45,23 @@
   }
   header .title { font-weight: 650; font-size: 15px; letter-spacing: .2px; }
   header .api { margin-left: auto; font-size: 12px; color: var(--text-soft); }
+  header .gear {
+    margin-left: 6px; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-soft); color: var(--text-soft); cursor: pointer; font-size: 15px; line-height: 1;
+  }
+  header .gear:hover { color: var(--text); }
+  /* Settings: a small panel under the gear, closed by default — the knobs
+     here are for the person who set serviette up, not for every reader. */
+  .settings { position: absolute; top: 56px; right: 20px; z-index: 10; width: 320px; padding: 14px 16px;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  .settings[hidden] { display: none; }
+  .settings h3 { margin: 0 0 10px; font-size: 13px; font-weight: 650; }
+  .settings label { display: block; font-size: 13px; }
+  .settings .row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .settings input[type=number] { width: 70px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-soft); color: var(--text); font-size: 13px; }
+  .settings .help { margin-top: 6px; font-size: 12px; color: var(--text-soft); line-height: 1.45; }
+  .settings .reset { font-size: 12px; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0; }
 
   main { flex: 1 1 auto; overflow-y: auto; scroll-behavior: smooth; }
   .thread { max-width: 760px; margin: 0 auto; padding: 28px 20px 40px; }
@@ -118,7 +135,19 @@
     <div class="title">__APP_TITLE__</div>
     <div class="api" id="statsLabel" title="live index statistics"></div>
     <div class="api" id="apiLabel"></div>
+    <button class="gear" id="gear" type="button" title="Settings" aria-label="Settings" aria-expanded="false">⚙</button>
   </header>
+  <div class="settings" id="settings" hidden>
+    <h3>Settings</h3>
+    <label for="kInput">Document fragments per answer</label>
+    <div class="row">
+      <input type="number" id="kInput" min="1" max="50" step="1">
+      <button class="reset" id="kReset" type="button">reset to 5</button>
+    </div>
+    <div class="help">How many of the best-matching passages the assistant reads before answering a question.
+      More fragments give it more to work with on broad questions, at the cost of a slower answer.
+      Questions about a whole document or a comparison of documents read the files themselves and ignore this.</div>
+  </div>
 
   <main id="main">
     <div class="thread" id="thread">
@@ -150,6 +179,37 @@
   const input = document.getElementById("input");
   const send = document.getElementById("send");
   const main = document.getElementById("main");
+
+  // Settings: how many passages a question retrieves (the API's ``k``).
+  // Remembered per browser; the server never sees a default of its own.
+  const K_DEFAULT = 5, K_KEY = "serviette.k";
+  const settings = document.getElementById("settings");
+  const gear = document.getElementById("gear");
+  const kInput = document.getElementById("kInput");
+  function currentK() {
+    let k = K_DEFAULT;
+    try { k = parseInt(localStorage.getItem(K_KEY) || "", 10) || K_DEFAULT; } catch (e) { /* storage unavailable */ }
+    return Math.min(50, Math.max(1, k));
+  }
+  function storeK(k) {
+    try { localStorage.setItem(K_KEY, String(k)); } catch (e) { /* storage unavailable */ }
+  }
+  kInput.value = currentK();
+  kInput.addEventListener("change", function () {
+    const k = Math.min(50, Math.max(1, parseInt(kInput.value, 10) || K_DEFAULT));
+    kInput.value = k; storeK(k);
+  });
+  document.getElementById("kReset").addEventListener("click", function () { kInput.value = K_DEFAULT; storeK(K_DEFAULT); });
+  gear.addEventListener("click", function () {
+    const open = settings.hidden;
+    settings.hidden = !open;
+    gear.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", function (e) {
+    if (!settings.hidden && !settings.contains(e.target) && e.target !== gear) {
+      settings.hidden = true; gear.setAttribute("aria-expanded", "false");
+    }
+  });
   let busy = false;
 
   // Show which API this page talks to (informational; empty = same origin).
@@ -290,7 +350,7 @@
       const res = await fetch("/api/v1/rag", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query, k: 5 }),
+        body: JSON.stringify({ query: query, k: currentK() }),
       });
       lastAnswerMs = performance.now() - startedAt;
       refreshStats();
