@@ -126,6 +126,10 @@ out of the file — set it in the environment:
 export PATHWAY_LICENSE_KEY="your-key-here"
 ```
 
+`serviette quickstart` notices an exported `PATHWAY_LICENSE_KEY` and offers to
+write the `${PATHWAY_LICENSE_KEY}` reference instead of asking for the key;
+`serviette demo` uses the variable the same way.
+
 The key is applied when the indexing graph is initialized.
 
 ---

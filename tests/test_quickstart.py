@@ -213,6 +213,38 @@ def test_wizard_run_collects_gdrive_source():
     cfg.for_indexer()
 
 
+def _minimal_answers(tokens_after_embedder: list[str], monkeypatch, tmp_path, shown=None):
+    """Run the wizard through the DuckDB + local-embedder path; the caller
+    supplies the answers from the license question on."""
+
+    monkeypatch.chdir(tmp_path)
+    tokens = ["2", "1", "/data/a", "1", "6", "1", "1", *tokens_after_embedder]
+    prompter = ScriptedPrompter(
+        input_fn=_feed(tokens), output_fn=shown.append if shown is not None else (lambda _s: None)
+    )
+    return Wizard(prompter=prompter).run()
+
+
+def test_wizard_references_an_exported_license_key(tmp_path, monkeypatch):
+    """With PATHWAY_LICENSE_KEY exported, Enter keeps the key out of the file
+    and references the variable; a pasted key still wins. Without it the
+    question stays required."""
+
+    monkeypatch.setenv("PATHWAY_LICENSE_KEY", "exported-key")
+    answers = _minimal_answers(["", ""], monkeypatch, tmp_path)  # Enter on the key, default output path
+    assert answers["license_key"] == "${PATHWAY_LICENSE_KEY}"
+    assert "exported-key" not in dump_yaml(build_config(answers))
+
+    answers = _minimal_answers(["pasted", ""], monkeypatch, tmp_path)
+    assert answers["license_key"] == "pasted"
+
+    monkeypatch.delenv("PATHWAY_LICENSE_KEY")
+    shown: list[str] = []
+    answers = _minimal_answers(["", "typed", ""], monkeypatch, tmp_path, shown)
+    assert answers["license_key"] == "typed"
+    assert any("required" in line for line in shown)
+
+
 def test_wizard_duckdb_happy_path_is_minimal(tmp_path, monkeypatch):
     """DuckDB + local embedder: no path/table/model/splitter questions at all
     (nothing exists yet, so defaults apply silently)."""

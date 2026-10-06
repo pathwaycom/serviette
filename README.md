@@ -9,10 +9,15 @@ a YAML file, and run a few commands. From then on, any change you make to the
 documents — an edit, a new file, a deletion — is reflected in answers within
 seconds.
 
-Try it in three commands:
+serviette runs on Pathway, which needs a **free license key** — one click at
+<https://pathway.com/framework/get-license> (GitHub or LinkedIn sign-in). Every
+command below expects it in `PATHWAY_LICENSE_KEY`.
+
+Try it in four commands:
 
 ```bash
 pip install serviette
+export PATHWAY_LICENSE_KEY=...        # free: https://pathway.com/framework/get-license
 export OPENAI_API_KEY=sk-...
 serviette demo --embedder openai      # → chat at http://localhost:8989
 ```
@@ -35,6 +40,7 @@ To run it over your own documents, generate a config and start the stack:
 ```bash
 pip install "serviette[local]"   # [local] = free local embeddings, the wizard's default (~4.5 GB PyTorch stack);
                                  # plain `pip install serviette` if you will embed with OpenAI instead
+export PATHWAY_LICENSE_KEY=...   # the free Pathway license (see above); the wizard picks it up from here
 export OPENAI_API_KEY=sk-...     # powers generated answers; omit to run keyless (answers quote the retrieved snippets)
 
 serviette quickstart                       # interactive config wizard
@@ -359,7 +365,9 @@ Caddy example lives in [docs](https://github.com/pathwaycom/serviette/blob/main/
 
 ## Requirements
 
-Python ≥ 3.10 (the minimum supported by Pathway).
+- Python ≥ 3.10 (the minimum supported by Pathway).
+- A free Pathway license key in `PATHWAY_LICENSE_KEY` —
+  <https://pathway.com/framework/get-license>.
 
 ## Documentation
 

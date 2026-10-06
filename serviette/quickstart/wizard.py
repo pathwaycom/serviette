@@ -655,7 +655,20 @@ class Wizard:
             "  Pathway requires a free license key. Get yours in one click at "
             "https://pathway.com/framework/get-license (email or LinkedIn sign-in)."
         )
-        answers["license_key"] = self.p.text("Paste your Pathway license key", required=True)
+        if os.environ.get("PATHWAY_LICENSE_KEY"):
+            # Already exported: reference the variable rather than copying
+            # the secret into the file (the way the LLM API key is handled).
+            self.p.info(
+                "  PATHWAY_LICENSE_KEY is set in your environment — press Enter to "
+                "reference it from the config, or paste a key to store it instead."
+            )
+            answers["license_key"] = self.p.text(
+                "Pathway license key", default="${PATHWAY_LICENSE_KEY}"
+            )
+        else:
+            answers["license_key"] = self.p.text(
+                "Paste your Pathway license key", required=True
+            )
 
         self._section("Output file path")
         answers["output_path"] = self.p.text("Output file path", default="./config.yaml")
