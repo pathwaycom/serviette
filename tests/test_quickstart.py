@@ -158,9 +158,9 @@ def test_wizard_run_collects_multiple_sources():
 
     tokens = [
         "2",                       # config type: indexer only
-        "1", "/data/a", "1",       # source 1: filesystem (glob is YAML-only now);
-                                   # the folder does not exist -> "use anyway"
-        "1", "/data/b", "1",       # source 2: filesystem
+        "1", "/data/a", "3",       # source 1: filesystem (glob is YAML-only now);
+                                   # the folder does not exist -> keep as typed
+        "1", "/data/b", "3",       # source 2: filesystem
         "6",                       # add another? -> Done
         "2",                       # vector db: pgvector (1 = duckdb)
         "postgresql://u:p@h/db",   # pg connection string
@@ -218,7 +218,7 @@ def _minimal_answers(tokens_after_embedder: list[str], monkeypatch, tmp_path, sh
     supplies the answers from the license question on."""
 
     monkeypatch.chdir(tmp_path)
-    tokens = ["2", "1", "/data/a", "1", "6", "1", "1", *tokens_after_embedder]
+    tokens = ["2", "1", "/data/a", "3", "6", "1", "1", *tokens_after_embedder]
     prompter = ScriptedPrompter(
         input_fn=_feed(tokens), output_fn=shown.append if shown is not None else (lambda _s: None)
     )
@@ -252,7 +252,7 @@ def test_wizard_duckdb_happy_path_is_minimal(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # ./embeddings.duckdb must not exist
     tokens = [
         "2",            # config type: indexer only
-        "1", "/data/a", "1",  # one filesystem source (missing folder: use anyway)
+        "1", "/data/a", "3",  # one filesystem source (missing folder: keep as typed)
         "6",            # done
         "1",            # vector db: duckdb -> defaults, no questions
         "1",            # embedder: local sentence_transformer -> no questions
@@ -268,6 +268,36 @@ def test_wizard_duckdb_happy_path_is_minimal(tmp_path, monkeypatch):
     assert cfg.embedder.type == "sentence_transformer"
 
 
+def test_wizard_offers_to_create_a_missing_folder(tmp_path, monkeypatch):
+    """A folder that does not exist is flagged and, on request, created;
+    a folder that cannot be created sends the user back to the question."""
+
+    monkeypatch.chdir(tmp_path)
+    shown: list[str] = []
+    new_dir = tmp_path / "fresh" / "docs"
+    tokens = [
+        "2",                            # indexer only
+        "1", str(new_dir), "1",         # fs source: missing -> create it now
+        "6", "1", "1", "K", "",         # done, duckdb, local embedder, license, output
+    ]
+    prompter = ScriptedPrompter(input_fn=_feed(tokens), output_fn=shown.append)
+    answers = Wizard(prompter=prompter).run()
+    assert new_dir.is_dir()
+    assert answers["sources"][0]["path"] == str(new_dir)
+    assert any("does not exist" in line for line in shown)
+    assert any("Created" in line for line in shown)
+
+    # Not creatable (a file is in the way): back to the question, then "keep as typed".
+    (tmp_path / "file").write_text("x")
+    blocked = tmp_path / "file" / "docs"
+    tokens = ["2", "1", str(blocked), "1", "3", "6", "1", "1", "K", ""]
+    shown.clear()
+    prompter = ScriptedPrompter(input_fn=_feed(tokens), output_fn=shown.append)
+    answers = Wizard(prompter=prompter).run()
+    assert answers["sources"][0]["path"] == str(blocked)
+    assert any("Could not create" in line for line in shown)
+
+
 def test_wizard_fs_source_expands_tilde_and_reasks_missing_dir(tmp_path, monkeypatch):
     """A mistyped folder is caught at the keyboard: the wizard re-asks unless
     the user explicitly keeps it; ``~`` is expanded in the answer."""
@@ -277,7 +307,7 @@ def test_wizard_fs_source_expands_tilde_and_reasks_missing_dir(tmp_path, monkeyp
     tokens = [
         "2",                    # config type: indexer only
         "1", "/no/such/dir",    # fs source: missing folder
-        "2",                    #   use anyway? -> No: ask again
+        "2",                    #   what now? -> enter a different path
         "~/docs",               #   an existing folder, via ~
         "6",                    # done
         "1",                    # duckdb

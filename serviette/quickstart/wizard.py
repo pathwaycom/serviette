@@ -412,19 +412,44 @@ class Wizard:
             sources.append(self._collect_source(stype))
         return sources
 
+    def _resolve_missing_dir(self, path: str) -> bool:
+        """Ask what to do about a folder that does not exist; True keeps
+        ``path`` (created or as typed), False means ask for another path."""
+
+        while True:
+            choice = self.p.select(
+                "What now?",
+                [
+                    "Create it now (empty; drop documents in later)",
+                    "Enter a different path",
+                    "Keep it as typed (I will create it before running the indexer)",
+                ],
+                default_index=0,
+            )
+            if choice == 1:
+                return False
+            if choice == 2:
+                return True
+            try:
+                Path(path).mkdir(parents=True)
+            except OSError as exc:
+                self.p.info(f"  Could not create {path!r}: {exc}")
+                continue  # back to the question
+            self.p.info(f"  Created {path!r}.")
+            return True
+
     def _collect_source(self, stype: str) -> dict[str, Any]:
         if stype == "fs":
             while True:
                 path = os.path.expanduser(self.p.text("Directory path", required=True))
                 if Path(path).is_dir():
                     break
-                # The indexer refuses to start on a missing folder; catch the
-                # typo here, while the user is still at the keyboard.
-                self.p.info(f"  Directory {path!r} does not exist.")
-                if self.p.confirm(
-                    "Use it anyway? (it must exist before you run the indexer)",
-                    default=False,
-                ):
+                # The indexer refuses to start on a missing folder. Say so
+                # plainly while the user is still at the keyboard, and offer
+                # to create it: for a fresh setup the folder usually does not
+                # exist yet, for a typo the question is the chance to notice.
+                self.p.info(f"  ! Directory {path!r} does not exist.")
+                if self._resolve_missing_dir(path):
                     break
             # glob is an advanced setting: default emitted into the YAML,
             # edit it there.
