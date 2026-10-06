@@ -261,6 +261,13 @@ class MilvusConfig(_HybridCapableConfig):
             return self.uri
         return f"http://{self.host}:{self.port}"
 
+    def is_lite(self) -> bool:
+        """Milvus Lite: ``uri`` is a local file (``./milvus.db``), not a URL.
+        Lite runs embedded in the process that opens the file and locks it,
+        so only one process can use it at a time."""
+
+        return bool(self.uri) and "://" not in self.uri
+
 
 class DuckDbConfig(_HybridCapableConfig):
     """Embedded vector store backed by a local DuckDB database file.
@@ -547,14 +554,59 @@ class MmrConfig(BaseModel):
     diversity: float = Field(default=0.3, ge=0.0, le=1.0)
 
 
+class DocumentsConfig(BaseModel):
+    """Document-level questions on ``/rag``: how many documents there are,
+    which ones exist, what a named file says, how two files differ.
+
+    On by default (unlike the other ``rag`` strategies) — these are the first
+    questions people ask, and chunk retrieval cannot answer them. A question
+    that names a file (with its extension) is answered from that file
+    directly. Any other question goes through the ordinary search first;
+    only when the LLM reports no answer does one short extra call decide
+    between searching wider (``rag.adaptive``) and answering from the
+    document catalog or from whole documents. Every step is bounded by
+    ``max_context_chars`` and the whole request by ``max_request_chars``,
+    whatever the size of the documents.
+
+    While enabled, the ``/rag`` system prompt carries the no-answer
+    instruction ``rag.adaptive`` uses (that reply is what triggers the extra
+    call), with ``corpus_card`` one line stating the document count, and with
+    ``source_labels`` each context chunk is prefixed with its file name.
+    Ignored on backends that cannot enumerate documents (Pinecone).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    # State the number of indexed documents in the /rag system prompt, so
+    # "how many documents do you have" is answered on the first attempt.
+    corpus_card: bool = True
+    # Prefix every retrieved chunk in the /rag context with the name of its
+    # file, so the model can attribute statements and tell apart documents
+    # that disagree (e.g. two versions of one file).
+    source_labels: bool = True
+    # Upper bound, in characters, on the document material one answering
+    # call sees (a whole document, a comparison, or the catalog listing).
+    max_context_chars: int = Field(default=24_000, ge=1_000)
+    # Upper bound, in characters, on everything one /rag request sends to
+    # the LLM across all of its calls (search attempts incl. the adaptive
+    # loop, routing, the answer). A call that does not fit is cut down to
+    # what is left; when nothing useful fits, no further call is made and
+    # the response says so in ``notice``. About 4 characters per token.
+    max_request_chars: int = Field(default=100_000, ge=2_000)
+    # How many document names the routing call is shown.
+    max_listed_documents: int = Field(default=200, ge=1)
+
+
 class RagConfig(BaseModel):
     """Optional retrieval-quality strategies for ``/retrieve`` and ``/rag``.
 
-    All are opt-in and composable: ``decompose`` widens *what* is retrieved,
-    ``mmr`` diversifies *which* candidates survive, ``adaptive`` retries with
-    a larger context when the answer is not found (``/rag`` only; ``decompose``
-    and ``mmr`` also apply to ``/retrieve``, though ``decompose`` needs an
-    ``llm`` section either way).
+    ``decompose`` widens *what* is retrieved, ``mmr`` diversifies *which*
+    candidates survive, ``adaptive`` retries with a larger context when the
+    answer is not found (``/rag`` only; ``decompose`` and ``mmr`` also apply
+    to ``/retrieve``, though ``decompose`` needs an ``llm`` section either
+    way). These three are opt-in and composable; ``documents`` (``/rag``
+    only) is on unless disabled.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -562,6 +614,7 @@ class RagConfig(BaseModel):
     adaptive: AdaptiveRagConfig | None = None
     decompose: DecomposeConfig | None = None
     mmr: MmrConfig | None = None
+    documents: DocumentsConfig = Field(default_factory=DocumentsConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -801,6 +854,31 @@ def require_source_dirs(config: ServietteConfig) -> None:
         "or create the directory first — documents dropped into an existing "
         "folder are indexed live."
     )
+
+
+def require_multi_process_backend(config: ServietteConfig) -> None:
+    """Abort when the backend cannot serve the indexer and the server at once.
+
+    ``serviette up`` runs them as two processes against one store. Milvus
+    Lite is an embedded, single-process database: whichever process opens
+    the file first holds its lock, and the other fails with
+    ``DataDirLockedError`` — in practice ``up``'s readiness probe wins and
+    the indexer dies before indexing anything. Lite still works for the
+    one-process-at-a-time flow (``serviette indexer`` with static sources,
+    then ``serviette server``).
+    """
+
+    vdb = config.vector_db
+    if isinstance(vdb, MilvusConfig) and vdb.is_lite():
+        raise SystemExit(
+            f"Milvus Lite ({vdb.uri!r}) cannot be used with 'serviette up': it is "
+            "an embedded single-process database, and 'up' runs the indexer and "
+            "the server as two processes against the same file.\n"
+            "Use a Milvus server instead (vector_db.uri: http://host:19530 — "
+            "e.g. the 'milvus run standalone' docker image), or run the two "
+            "commands one after the other: 'serviette indexer' with "
+            "'mode: static' sources, then 'serviette server'."
+        )
 
 
 # ---------------------------------------------------------------------------

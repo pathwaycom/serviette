@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from serviette.server.accessors.abstract import AsyncVectorAccessor
+from serviette.server.accessors.abstract import AsyncVectorAccessor, document_key
 from serviette.server.hybrid import KeywordHybridMixin
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,72 @@ class QdrantAccessor(KeywordHybridMixin, AsyncVectorAccessor):
                 with_vectors=with_embeddings,
             )
             hits.extend(self._to_hit(point, with_embeddings) for point in points)
+            if offset is None:
+                break
+        return hits
+
+    # -- document catalog (rag.documents) -------------------------------------
+
+    async def _catalog_scan(self) -> list[dict[str, Any]]:
+        # Metadata only: the texts are most of the payload and the catalog
+        # does not need them.
+        client = self._ensure_client()
+        documents: dict[str, dict[str, Any]] = {}
+        offset = None
+        while True:
+            points, offset = await client.scroll(
+                collection_name=self._collection,
+                limit=_SCROLL_PAGE,
+                offset=offset,
+                with_payload=["metadata"],
+                with_vectors=False,
+            )
+            for point in points:
+                metadata = (point.payload or {}).get("metadata") or {}
+                key = document_key(metadata)
+                if key is None:
+                    continue
+                entry = documents.setdefault(
+                    key, {"id": key, "metadata": metadata, "chunks": 0}
+                )
+                entry["chunks"] += 1
+            if offset is None:
+                break
+        return list(documents.values())
+
+    async def document_chunks(
+        self, document: str, *, with_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
+        # A payload filter on the document identity — evaluated server-side,
+        # so only the document's points travel (no payload index is created:
+        # the accessor never alters the collection).
+        from qdrant_client import models
+
+        client = self._ensure_client()
+        selector = models.Filter(
+            should=[
+                models.FieldCondition(
+                    key=f"metadata.{field}", match=models.MatchValue(value=document)
+                )
+                for field in ("path", "id", "name")
+            ]
+        )
+        hits: list[dict[str, Any]] = []
+        offset = None
+        while True:
+            points, offset = await client.scroll(
+                collection_name=self._collection,
+                scroll_filter=selector,
+                limit=_SCROLL_PAGE,
+                offset=offset,
+                with_payload=True,
+                with_vectors=with_embeddings,
+            )
+            hits.extend(
+                self._to_hit(point, with_embeddings)
+                for point in points
+                if document_key((point.payload or {}).get("metadata")) == document
+            )
             if offset is None:
                 break
         return hits

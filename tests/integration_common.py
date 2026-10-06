@@ -89,6 +89,25 @@ def _retrieve_ex(
     return asyncio.run(go())
 
 
+def _catalog(make_accessor: Callable[[], AsyncVectorAccessor]):
+    """``(list_documents(), document_chunks(<a.txt>))`` — the rag.documents
+    catalog operations, or ``None`` when the backend has no catalog."""
+
+    async def go():
+        accessor = make_accessor()
+        try:
+            if not accessor.supports_catalog:
+                return None
+            documents = await accessor.list_documents()
+            a_txt = next(d for d in documents if d["id"].endswith("a.txt"))
+            chunks = await accessor.document_chunks(a_txt["id"], with_embeddings=True)
+            return documents, chunks
+        finally:
+            await accessor.close()
+
+    return asyncio.run(go())
+
+
 def paths_of(results: list[dict[str, Any]]) -> set[str]:
     return {Path(r["metadata"]["path"]).name for r in results if r.get("metadata")}
 
@@ -155,6 +174,15 @@ def run_backend_scenario(
             isinstance(h.get("embedding"), list) and h["embedding"] for h in fused_emb
         ), "hybrid with_embeddings=True must carry the stored vectors"
 
+    # -- document catalog (rag.documents) --------------------------------------
+    catalog = _catalog(make_accessor)
+    if catalog is not None:
+        documents, chunks = catalog
+        assert {Path(d["id"]).name for d in documents} == {"a.txt", "b.txt"}
+        assert all(d["chunks"] == 1 and d["metadata"]["path"] for d in documents)
+        assert [c["text"] for c in chunks] == [ALPHA]
+        assert isinstance(chunks[0].get("embedding"), list) and chunks[0]["embedding"]
+
     # -- pass 2: deleting b.txt removes its vectors (snapshot semantics) ------
     (docs / "b.txt").unlink()
     run_indexer(cfg, tmp_path / "cache")
@@ -163,3 +191,8 @@ def run_backend_scenario(
 
     results = _retrieve(make_accessor, BETA, k=5)
     assert paths_of(results) == {"a.txt"}, "b.txt vectors must be deleted"
+    catalog = _catalog(make_accessor)
+    if catalog is not None:
+        assert {Path(d["id"]).name for d in catalog[0]} == {"a.txt"}, (
+            "the document catalog must follow deletions"
+        )

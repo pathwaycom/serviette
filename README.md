@@ -278,6 +278,20 @@ answer is not found.
   stop competing for the same top-k slots (`rag.decompose`).
 - **MMR.** Diversifies the result set, trading relevance against redundancy
   (`rag.mmr`).
+- **Document questions.** "How many documents do you have?", "What does
+  `journal.pdf` say?", "What changed between `law_2023.txt` and
+  `law_2024.txt`?" are questions about documents, not about a passage, and
+  chunk retrieval cannot answer them. `rag.documents` (on by default) answers
+  them from the document catalog and from whole files: a question naming a
+  file goes straight to that file; any other question is searched as usual,
+  and only if that finds nothing does one short LLM call decide between a
+  wider search and the catalog or the named documents. Two files that share
+  most of their text are compared as a line-level diff computed by the
+  server, so the model reads only what changed — however the files were
+  chunked. Every step has a fixed context budget and the request as a whole
+  a ceiling (`max_request_chars`); when a file cannot be identified the
+  answer says which names were close.
+  Not available on Pinecone, which cannot enumerate documents.
 
 The reranker and the multi-step strategies (adaptive, decompose) are
 backend-independent — they work on every vector DB. Hybrid and MMR read from

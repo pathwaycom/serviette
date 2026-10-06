@@ -190,6 +190,70 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
             hits.append(hit)
         return hits
 
+    # -- document catalog (rag.documents) -------------------------------------
+
+    # The same document identity ``_stats`` counts by.
+    _DOCUMENT_SQL = (
+        "coalesce("
+        "json_extract_string(metadata, '$.path'),"
+        "json_extract_string(metadata, '$.id'),"
+        "json_extract_string(metadata, '$.name'))"
+    )
+
+    async def _catalog_scan(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_documents)
+
+    def _list_documents(self) -> list[dict[str, Any]]:
+        conn = self._connect_with_retry()
+        try:
+            rows = conn.execute(
+                f"SELECT {self._DOCUMENT_SQL} AS document, count(*),"
+                f"  any_value(metadata) "
+                f'FROM "{self._table}" WHERE embedding IS NOT NULL '
+                f"GROUP BY document HAVING document IS NOT NULL AND document <> ''"
+            ).fetchall()
+        finally:
+            conn.close()
+        documents = []
+        for document, chunks, metadata in rows:
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            documents.append(
+                {"id": document, "metadata": metadata or {}, "chunks": int(chunks)}
+            )
+        return documents
+
+    async def document_chunks(
+        self, document: str, *, with_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._document_chunks, document, with_embeddings
+        )
+
+    def _document_chunks(
+        self, document: str, with_embeddings: bool
+    ) -> list[dict[str, Any]]:
+        embedding_col = ", embedding" if with_embeddings else ""
+        conn = self._connect_with_retry()
+        try:
+            rows = conn.execute(
+                f'SELECT text, metadata{embedding_col} FROM "{self._table}" '
+                f"WHERE embedding IS NOT NULL AND {self._DOCUMENT_SQL} = ?",
+                [document],
+            ).fetchall()
+        finally:
+            conn.close()
+        hits = []
+        for row in rows:
+            text, metadata = row[0], row[1]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            hit: dict[str, Any] = {"text": text, "metadata": metadata or {}}
+            if with_embeddings:
+                hit["embedding"] = [float(x) for x in row[2]]
+            hits.append(hit)
+        return hits
+
     async def stats(self) -> dict[str, Any]:
         return await asyncio.to_thread(self._stats)
 

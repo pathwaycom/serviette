@@ -17,6 +17,20 @@ class IndexNotReadyError(RuntimeError):
     instead of a stack trace."""
 
 
+def document_key(metadata: dict[str, Any] | None) -> str | None:
+    """The identity of a chunk's source document, as the source reports it:
+    ``path`` (fs, s3, sharepoint, pyfilesystem) or ``id`` / ``name`` (gdrive).
+    The same rule the backends' ``stats`` use to count documents."""
+
+    if not metadata:
+        return None
+    for field in ("path", "id", "name"):
+        value = metadata.get(field)
+        if value is not None and value != "":
+            return str(value)
+    return None
+
+
 class AsyncVectorAccessor(ABC):
     """Retrieve the nearest chunks for a query embedding from a vector store.
 
@@ -28,6 +42,26 @@ class AsyncVectorAccessor(ABC):
     # embeddings (needed by MMR). Backends that can cheaply return stored
     # vectors flip this to True and honor the flag.
     supports_embeddings = False
+
+    # Whether the backend can enumerate its documents (``list_documents`` /
+    # ``document_chunks``) — what ``rag.documents`` needs. Backends that
+    # cannot list their rows at all (Pinecone) leave this False.
+    supports_catalog = False
+
+    async def list_documents(self) -> list[dict[str, Any]]:
+        """Every indexed document: ``{"id": str, "metadata": dict,
+        "chunks": int}``, where ``id`` is :func:`document_key` of its chunks
+        and ``metadata`` is that of one of them."""
+
+        raise NotImplementedError
+
+    async def document_chunks(
+        self, document: str, *, with_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
+        """All chunks of the document with the given ``id``, as hit dicts
+        without a score. The store keeps no chunk order, so none is implied."""
+
+        raise NotImplementedError
 
     @abstractmethod
     async def retrieve(self, embedding: list[float], k: int) -> list[dict[str, Any]]:

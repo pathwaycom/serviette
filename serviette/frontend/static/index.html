@@ -71,6 +71,7 @@
   }
   .msg.user .bubble { background: var(--user-bubble); color: var(--user-text); border-bottom-right-radius: 6px; }
   .msg.assistant .bubble { background: var(--assistant-bubble); color: var(--text); border-bottom-left-radius: 6px; }
+  .bubble .h { font-weight: 600; font-size: 16px; }
   .bubble code { background: rgba(127,127,127,.18); padding: 1px 5px; border-radius: 5px; font-size: 13px; }
   .bubble pre { background: rgba(127,127,127,.14); padding: 12px; border-radius: 12px; overflow-x: auto; }
   .bubble pre code { background: none; padding: 0; }
@@ -82,6 +83,7 @@
   .sources .src { padding: 10px 12px; border-top: 1px solid var(--border); font-size: 13px; }
   .sources .src .meta { color: var(--text-soft); font-size: 12px; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 8px; }
   .sources .src .snippet { color: var(--text); white-space: pre-wrap; max-height: 120px; overflow: hidden; }
+  .notice { margin: 6px 0 0 42px; max-width: 78%; font-size: 12px; color: var(--text-soft); }
 
   .dots { display: inline-flex; gap: 4px; padding: 4px 0; }
   .dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-soft); animation: blink 1.4s infinite both; }
@@ -186,6 +188,11 @@
     let out = escapeHtml(text);
     out = out.replace(/```([\s\S]*?)```/g, (_, c) => "<pre><code>" + c.trim() + "</code></pre>");
     out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
+    // Headings ("## Title") and bullets ("- item", "* item") — the bubble is
+    // pre-wrapped text, so a line-level rewrite is all they need. Bullets go
+    // before emphasis so a leading "* " is not read as an opening asterisk.
+    out = out.replace(/^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*$/gm, '<span class="h">$1</span>');
+    out = out.replace(/^([ \t]*)[-*][ \t]+/gm, "$1• ");
     out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     out = out.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
     return out;
@@ -230,6 +237,20 @@
     });
     wrap.appendChild(det);
     thread.appendChild(wrap);
+    scrollDown();
+  }
+
+  // What the answer was based on, as reported by the server (rag.documents):
+  // the documents it was scoped to and any remark on coverage.
+  function renderNotice(data) {
+    const parts = [];
+    if (data.documents && data.documents.length) parts.push("Answered from: " + data.documents.join(", "));
+    if (data.notice && data.mode !== "unresolved") parts.push(data.notice);
+    if (!parts.length) return;
+    const div = document.createElement("div");
+    div.className = "notice";
+    div.textContent = parts.join(" · ");
+    thread.appendChild(div);
     scrollDown();
   }
 
@@ -280,6 +301,7 @@
         typing.bubble.textContent = detail;
       } else {
         typing.bubble.innerHTML = renderMarkdown(data.answer || "(empty answer)");
+        renderNotice(data);
         renderSources(data.sources);
       }
     } catch (err) {
