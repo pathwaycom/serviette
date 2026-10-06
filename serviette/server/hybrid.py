@@ -171,25 +171,67 @@ class KeywordHybridMixin:
 
     # -- document catalog (rag.documents) -------------------------------------
     #
-    # Built from the same full scan as the BM25 corpus and cached on the same
-    # change signal, so listing documents costs one cheap version query per
-    # request. Backends with a query language override ``_catalog_scan`` and
-    # ``document_chunks`` with native queries.
+    # Built from a scan of the stored metadata and cached the way the BM25
+    # index is: rebuilt synchronously when the backend's change signal moves
+    # (a request must not see documents known to be gone), refreshed in the
+    # background on the timer for what that signal misses, one build at a
+    # time. Listing documents therefore costs one cheap version query per
+    # request. Capped at ``hybrid_max_chunks`` like the BM25 corpus: both
+    # are in-process scans of the whole store. Backends with a query
+    # language override ``_catalog_scan`` and ``document_chunks`` with
+    # native queries.
 
     supports_catalog = True
     _catalog: list[dict[str, Any]] | None = None
     _catalog_built_for: tuple[int, Any] | None = None
     _catalog_built_at = 0.0
+    _catalog_lock: asyncio.Lock | None = None
+    _catalog_refresh: asyncio.Task | None = None
+    _warned_catalog_too_large = False
 
     async def list_documents(self) -> list[dict[str, Any]]:
         version = await self._hybrid_version()
+        if version[0] > self._hybrid_max_chunks:
+            if not self._warned_catalog_too_large:
+                self._warned_catalog_too_large = True
+                logger.warning(
+                    "rag.documents: ~%d chunks exceeds hybrid_max_chunks=%d — the "
+                    "document catalog is not built (document mode stays off).",
+                    version[0],
+                    self._hybrid_max_chunks,
+                )
+            raise RuntimeError("store too large for an in-process document catalog")
+        if self._catalog is None or self._catalog_built_for != version:
+            return await self._rebuild_catalog(version)
         ttl = getattr(self, "_hybrid_refresh_seconds", None)
-        stale = ttl is not None and time.monotonic() - self._catalog_built_at >= ttl
-        if self._catalog is None or self._catalog_built_for != version or stale:
-            self._catalog = await self._catalog_scan()
-            self._catalog_built_for = version
-            self._catalog_built_at = time.monotonic()
+        if ttl is not None and time.monotonic() - self._catalog_built_at >= ttl:
+            task = self._catalog_refresh
+            if task is None or task.done():
+                self._catalog_refresh = asyncio.create_task(
+                    self._refresh_catalog(version)
+                )
         return self._catalog
+
+    async def _rebuild_catalog(self, version: tuple[int, Any]) -> list[dict[str, Any]]:
+        if self._catalog_lock is None:
+            self._catalog_lock = asyncio.Lock()
+        async with self._catalog_lock:
+            # A concurrent caller may have rebuilt while we waited.
+            if self._catalog is None or self._catalog_built_for != version:
+                self._catalog = await self._catalog_scan()
+                self._catalog_built_for = version
+                self._catalog_built_at = time.monotonic()
+            assert self._catalog is not None
+            return self._catalog
+
+    async def _refresh_catalog(self, version: tuple[int, Any]) -> None:
+        try:
+            # Same version, so force the scan by invalidating the marker.
+            self._catalog_built_for = None
+            await self._rebuild_catalog(version)
+        except Exception as exc:  # noqa: BLE001 - keep serving the previous catalog
+            self._catalog_built_for = version
+            logger.warning("rag.documents: background catalog refresh failed: %s", exc)
 
     async def _catalog_scan(self) -> list[dict[str, Any]]:
         documents: dict[str, dict[str, Any]] = {}
@@ -214,6 +256,6 @@ class KeywordHybridMixin:
 
     async def _close_hybrid(self) -> None:
         """Let a running background refresh finish (called from ``close``)."""
-        task = self._bm25_refresh
-        if task is not None and not task.done():
-            await task
+        for task in (self._bm25_refresh, self._catalog_refresh):
+            if task is not None and not task.done():
+                await task

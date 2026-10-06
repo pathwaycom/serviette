@@ -28,7 +28,11 @@ import subprocess
 import sys
 import time
 
-from serviette.config.schema import ServietteConfig, require_source_dirs
+from serviette.config.schema import (
+    ServietteConfig,
+    require_multi_process_backend,
+    require_source_dirs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +333,10 @@ def run(config: ServietteConfig, config_path: str) -> int:
     # nothing, the "empty folder" path below starts the server, and the user
     # only sees "no relevant context" answers.
     require_source_dirs(config)
+    # Fail before anything starts on a backend that cannot be shared by the
+    # two processes (Milvus Lite): started anyway, the indexer dies on the
+    # file lock our own readiness probe holds.
+    require_multi_process_backend(config)
     _warn_duckdb_streaming(config)
 
     indexer = _spawn("indexer", config_path, env=_confirm_fingerprint(config))

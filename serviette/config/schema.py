@@ -261,6 +261,13 @@ class MilvusConfig(_HybridCapableConfig):
             return self.uri
         return f"http://{self.host}:{self.port}"
 
+    def is_lite(self) -> bool:
+        """Milvus Lite: ``uri`` is a local file (``./milvus.db``), not a URL.
+        Lite runs embedded in the process that opens the file and locks it,
+        so only one process can use it at a time."""
+
+        return bool(self.uri) and "://" not in self.uri
+
 
 class DuckDbConfig(_HybridCapableConfig):
     """Embedded vector store backed by a local DuckDB database file.
@@ -847,6 +854,31 @@ def require_source_dirs(config: ServietteConfig) -> None:
         "or create the directory first — documents dropped into an existing "
         "folder are indexed live."
     )
+
+
+def require_multi_process_backend(config: ServietteConfig) -> None:
+    """Abort when the backend cannot serve the indexer and the server at once.
+
+    ``serviette up`` runs them as two processes against one store. Milvus
+    Lite is an embedded, single-process database: whichever process opens
+    the file first holds its lock, and the other fails with
+    ``DataDirLockedError`` — in practice ``up``'s readiness probe wins and
+    the indexer dies before indexing anything. Lite still works for the
+    one-process-at-a-time flow (``serviette indexer`` with static sources,
+    then ``serviette server``).
+    """
+
+    vdb = config.vector_db
+    if isinstance(vdb, MilvusConfig) and vdb.is_lite():
+        raise SystemExit(
+            f"Milvus Lite ({vdb.uri!r}) cannot be used with 'serviette up': it is "
+            "an embedded single-process database, and 'up' runs the indexer and "
+            "the server as two processes against the same file.\n"
+            "Use a Milvus server instead (vector_db.uri: http://host:19530 — "
+            "e.g. the 'milvus run standalone' docker image), or run the two "
+            "commands one after the other: 'serviette indexer' with "
+            "'mode: static' sources, then 'serviette server'."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -144,7 +144,9 @@ _EDGE_LINES = 3
 # A line whose digit-masked form occurs at least this often in *both*
 # documents is running matter (page headers, numbered rows): its digits are
 # ignored, so a page number or an edition date in a header is not a change.
-_RUNNING_LINES = 20
+# Low on purpose: a header repeats once per page, and short documents have
+# few pages.
+_RUNNING_LINES = 5
 # A passage only in one document and a passage only in the other that share
 # at least this fraction of their words are one passage edited.
 _CHANGED_SIMILARITY = 0.5
@@ -176,6 +178,44 @@ def _stem(name: str) -> str:
     return posixpath.splitext(name)[0]
 
 
+# The name index of the catalog last seen: the accessor hands out the same
+# list object until the index changes, so one entry is enough.
+_name_index_cache: tuple[int, int, tuple] | None = None
+
+
+def _name_index(catalog: list[dict[str, Any]]) -> tuple:
+    """``(known, longest, extension_end, file_like)`` for :func:`mentioned_names`:
+    folded catalog names and paths -> spelling in the catalog, the longest of
+    them, and the two regexes for file extensions seen in the catalog."""
+
+    global _name_index_cache
+    if _name_index_cache is not None:
+        cached_id, cached_len, index = _name_index_cache
+        if cached_id == id(catalog) and cached_len == len(catalog):
+            return index
+    known: dict[str, str] = {}
+    extensions = set(_FILE_EXTENSIONS)
+    longest = 0
+    for entry in catalog:
+        name = document_name(entry)
+        for candidate in (str(entry["id"]), name):
+            needle = _fold(candidate)
+            if "." not in posixpath.basename(needle):
+                continue
+            known.setdefault(needle, candidate)
+            longest = max(longest, len(needle))
+        extension = posixpath.splitext(_fold(name))[1].lstrip(".")
+        if extension:
+            extensions.add(extension)
+    extension_end = re.compile(
+        r"\.(?:" + "|".join(re.escape(ext) for ext in sorted(extensions)) + r")(?![\w])"
+    )
+    file_like = re.compile(r"(?<![\w./\\])[\w\-]+" + extension_end.pattern)
+    index = (known, longest, extension_end, file_like)
+    _name_index_cache = (id(catalog), len(catalog), index)
+    return index
+
+
 def mentioned_names(query: str, catalog: list[dict[str, Any]]) -> list[str]:
     """Document names the question spells out literally, in question order.
 
@@ -185,43 +225,38 @@ def mentioned_names(query: str, catalog: list[dict[str, Any]]) -> list[str]:
     word; such references are left to :func:`arbitrate`. Names of files that
     are not indexed are returned as well (as written), for
     :func:`resolve_names` to report.
+
+    Runs in time proportional to the question, not to the catalog: every
+    ``.ext`` in the question is a candidate end of a name, and the text
+    before it is looked up in a dict of catalog names.
     """
 
     folded = _fold(query)
+    known, longest, extension_end, file_like = _name_index(catalog)
+
     found: dict[str, int] = {}
-    for entry in catalog:
-        name = document_name(entry)
-        for candidate in (str(entry["id"]), name):
-            needle = _fold(candidate)
-            if "." not in posixpath.basename(needle):
+    claimed: list[tuple[int, int]] = []
+    for match in extension_end.finditer(folded):
+        end = match.end()
+        # The longest catalog name ending here wins, so a full path beats
+        # the bare file name it ends with. A name may contain spaces, so
+        # every earlier position is a possible start — bounded by the
+        # longest name in the catalog.
+        for start in range(max(0, end - longest), end):
+            if start and (folded[start - 1].isalnum() or folded[start - 1] in "_./\\"):
                 continue
-            # Not preceded by a path separator either: "archive/journal.pdf"
-            # must not also count as a mention of another folder's
-            # "journal.pdf".
-            match = re.search(
-                r"(?<![\w./\\])" + re.escape(needle) + r"(?![\w])", folded
-            )
-            if match:
-                found.setdefault(candidate, match.start())
+            candidate = known.get(folded[start:end])
+            if candidate is not None:
+                found.setdefault(candidate, start)
+                claimed.append((start, end))
                 break
     # A file name that is not in the catalog is a mention too: the person
     # asked about a specific file, and "there is no such file" is the answer
     # — a search over other documents' contents would not be.
-    extensions = _FILE_EXTENSIONS | {
-        posixpath.splitext(_fold(document_name(e)))[1].lstrip(".") for e in catalog
-    }
-    extensions.discard("")
-    known = {_fold(name) for name in found} | {
-        _fold(document_name(e)) for e in catalog
-    }
-    file_like = re.compile(
-        r"(?<![\w./\\])[\w\-]+\.(?:"
-        + "|".join(re.escape(ext) for ext in sorted(extensions))
-        + r")(?![\w])"
-    )
     for match in file_like.finditer(folded):
-        if match.group(0) not in known:
-            found.setdefault(query[match.start() : match.end()], match.start())
+        if any(s <= match.start() < e for s, e in claimed):
+            continue
+        found.setdefault(query[match.start() : match.end()], match.start())
     return sorted(found, key=found.__getitem__)
 
 
@@ -637,10 +672,11 @@ class _Lines:
         for index, chunk in enumerate(chunks):
             rows = [(_squash(raw), raw.strip()) for raw in chunk["text"].splitlines()]
             squashed_chunks.append("".join(row[0] for row in rows))
-            if len(rows) >= _EDGE_LINES:
+            if len(chunks) > 1 and len(rows) >= _EDGE_LINES:
                 # A window splitter cuts the first and last line of a chunk
                 # mid-line; such fragments match nothing. The chunk overlap
-                # carries the same lines whole in the neighbouring chunk.
+                # carries the same lines whole in the neighbouring chunk. A
+                # document that is a single chunk was not cut at all.
                 rows = rows[1:-1]
             for squashed, _raw in rows:
                 if len(squashed) >= _MIN_LINE:

@@ -63,6 +63,29 @@ def test_require_source_dirs_rejects_missing_folder(tmp_path):
         require_source_dirs(cfg(tmp_path / "file.txt"))
 
 
+def test_up_refuses_milvus_lite(tmp_path):
+    """Milvus Lite is embedded and single-process: ``serviette up`` would make
+    its own readiness probe lock the file and the indexer die on it. Refuse
+    up front; a Milvus server URL passes."""
+
+    from serviette.config.schema import require_multi_process_backend
+
+    def cfg(**vdb):
+        return ServietteConfig.model_validate(
+            {
+                "sources": [{"type": "fs", "path": str(tmp_path)}],
+                "vector_db": {"type": "milvus", **vdb},
+                "embedder": {"type": "mock"},
+            }
+        )
+
+    with pytest.raises(SystemExit, match="Milvus Lite") as exc:
+        require_multi_process_backend(cfg(uri=str(tmp_path / "milvus.db")))
+    assert "serviette up" in str(exc.value) and "milvus run standalone" in str(exc.value)
+    require_multi_process_backend(cfg(uri="http://127.0.0.1:19530"))
+    require_multi_process_backend(cfg(host="milvus.internal", port=19530))
+
+
 def test_gdrive_source_validates():
     src = GDriveSource(
         object_id="abc123",

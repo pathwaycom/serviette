@@ -319,6 +319,15 @@ Auto-created: a collection with a VARCHAR primary key, `text` (VARCHAR),
 `metadata` (JSON) and an `embedding` (FLOAT_VECTOR) field of the embedder's
 dimension, AUTOINDEX with the `COSINE` metric.
 
+**Milvus Lite** (`uri: ./milvus.db`, a local file) is an embedded,
+single-process database: the process that opens the file locks it. It works
+for the one-process-at-a-time flow — `serviette indexer` with `mode: static`
+sources, then `serviette server` — but not with `serviette up`, which runs
+the indexer and the server as two processes against one store; `up` refuses
+such a config up front. For `up`, a live chat over a changing folder, or
+scaling the server, use a Milvus server (`uri: http://host:19530`, e.g. the
+`milvus run standalone` docker image).
+
 #### Qdrant
 
 Nothing to create: the indexer (`pw.io.qdrant`, gRPC) auto-creates the

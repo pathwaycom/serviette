@@ -121,6 +121,50 @@ class PgVectorAccessor(KeywordHybridMixin, AsyncVectorAccessor):
             hits.append(hit)
         return hits
 
+    # -- document catalog (rag.documents) -------------------------------------
+
+    # The same document identity ``stats`` counts by.
+    _DOCUMENT_SQL = "coalesce(metadata->>'path', metadata->>'id', metadata->>'name')"
+
+    async def _catalog_scan(self) -> list[dict[str, Any]]:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT {self._DOCUMENT_SQL} AS document, count(*) AS chunks,"
+                f"  min(metadata::text) AS metadata FROM {self._table} "
+                f"GROUP BY document HAVING {self._DOCUMENT_SQL} <> ''"
+            )
+        return [
+            {
+                "id": row["document"],
+                "metadata": _parse_metadata(row["metadata"]),
+                "chunks": int(row["chunks"]),
+            }
+            for row in rows
+        ]
+
+    async def document_chunks(
+        self, document: str, *, with_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
+        pool = await self._ensure_pool()
+        embedding_col = ", embedding" if with_embeddings else ""
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT text, metadata{embedding_col} FROM {self._table} "
+                f"WHERE {self._DOCUMENT_SQL} = $1",
+                document,
+            )
+        hits: list[dict[str, Any]] = []
+        for row in rows:
+            hit: dict[str, Any] = {
+                "text": row["text"],
+                "metadata": _parse_metadata(row["metadata"]),
+            }
+            if with_embeddings:
+                hit["embedding"] = _parse_embedding(row["embedding"])
+            hits.append(hit)
+        return hits
+
     async def stats(self) -> dict[str, Any]:
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
