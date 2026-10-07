@@ -8,10 +8,14 @@ milliseconds without any external service.
 
 Concurrency note: the indexer writes with ``detach_between_batches``,
 releasing the single-writer file lock between minibatches; connections here
-are short-lived and read-only and retry through those brief lock windows.
-Before the indexer's first commit the file (or table) does not exist yet —
-that is surfaced as :class:`IndexNotReadyError`, which the server turns into
-a friendly HTTP 503 rather than a stack trace.
+are short-lived and read-only and retry through those lock windows. Most are
+milliseconds, but the first commit of a real corpus (thousands of chunks with
+embeddings) holds the lock for seconds — the accessor waits up to
+``_LOCK_WAIT`` and then raises :class:`IndexBusyError` ("being updated, retry
+in a moment") rather than failing the request. Before the indexer's first
+commit the file (or table) does not exist yet — that is
+:class:`IndexNotReadyError`. The server turns both into a friendly HTTP 503
+rather than a stack trace.
 """
 
 from __future__ import annotations
@@ -21,16 +25,21 @@ import json
 import logging
 from typing import Any
 
-from serviette.server.accessors.abstract import AsyncVectorAccessor, IndexNotReadyError
+from serviette.server.accessors.abstract import (
+    AsyncVectorAccessor,
+    IndexBusyError,
+    IndexNotReadyError,
+)
 from serviette.server.hybrid import KeywordHybridMixin
 
 logger = logging.getLogger(__name__)
 
 _LOCK_HINT = (
-    "Could not open the DuckDB database %r (is a streaming indexer holding it "
-    "read-write?). DuckDB allows one writer OR multiple readers per file. "
-    "Run the indexer with `mode: static` sources, or switch to a client-server "
-    "backend (qdrant, pgvector, ...) for concurrent indexing and serving."
+    "The DuckDB database %r has been write-locked by another process for over "
+    "%.0fs. A streaming indexer normally releases the lock between batches "
+    "(seconds at most); if this keeps happening, check for a second indexer or "
+    "another DuckDB client holding the file open, or move to a client-server "
+    "backend (qdrant, pgvector, ...) for heavy concurrent indexing and serving."
 )
 
 
@@ -70,18 +79,21 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
     async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._fetch_all_rows, with_embeddings)
 
-    # A writer flushing with detach_between_batches holds the lock only
-    # briefly; ride out that window before declaring the file unreachable.
-    _LOCK_RETRIES = 10
-    _LOCK_RETRY_DELAY = 0.2  # seconds
+    # How long a reader rides out the writer's lock before giving up with a
+    # 503. Sized for the first commit of a real corpus: ~5 000 chunks with
+    # embeddings held the lock for ~10 s in measurements; later batches are
+    # small and release within milliseconds.
+    _LOCK_WAIT = 30.0  # seconds
+    _LOCK_RETRY_DELAY = 0.25  # seconds
 
     def _connect_with_retry(self):
         import time
 
         import duckdb
 
+        deadline = time.monotonic() + self._LOCK_WAIT
         last_exc: Exception | None = None
-        for _ in range(self._LOCK_RETRIES):
+        while True:
             try:
                 return duckdb.connect(self._path, read_only=True)
             except duckdb.Error as exc:
@@ -94,9 +106,17 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
                 if "lock" not in message:
                     raise
                 last_exc = exc
-                time.sleep(self._LOCK_RETRY_DELAY)
-        logger.error(_LOCK_HINT, self._path)
-        raise RuntimeError(_LOCK_HINT % (self._path,)) from last_exc
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(self._LOCK_RETRY_DELAY)
+        # Not an error of ours: the indexer is simply mid-write. Say so and
+        # let the client retry; warn in the log, since a lock held this long
+        # is unusual enough to be worth a look.
+        logger.warning(_LOCK_HINT, self._path, self._LOCK_WAIT)
+        raise IndexBusyError(
+            f"the DuckDB file {self._path!r} was write-locked by the indexer for "
+            f"over {self._LOCK_WAIT:.0f}s"
+        ) from last_exc
 
     def _query(
         self, embedding: list[float], k: int, *, with_embeddings: bool = False

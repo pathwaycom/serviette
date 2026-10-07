@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import subprocess
+import sys
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -387,6 +392,74 @@ def test_index_not_ready_returns_friendly_503(tmp_path, mock_server_embedder):
     body = resp.json()
     assert "not ready" in body["detail"]
     assert resp.headers.get("retry-after") == "5"
+
+
+@contextlib.contextmanager
+def _external_writer(path, hold_seconds: float):
+    """Hold DuckDB's single-writer lock on ``path`` from another process for
+    ``hold_seconds`` — what the indexer does while committing a batch. (A
+    second connection from *this* process fails with a different error,
+    not a lock conflict, so the writer has to be a real separate process.)"""
+
+    script = (
+        "import sys, time, duckdb\n"
+        "conn = duckdb.connect(sys.argv[1])\n"
+        "print('locked', flush=True)\n"
+        "time.sleep(float(sys.argv[2]))\n"
+        "conn.close()\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script, str(path), str(hold_seconds)],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None and proc.stdout.readline().strip() == "locked"
+        yield
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_reader_waits_out_a_long_write_lock(store_path, mock_server_embedder):
+    """The indexer's first commit of a real corpus holds the file lock for
+    seconds; a request arriving meanwhile must wait, not fail."""
+
+    with (
+        _external_writer(store_path, hold_seconds=1.5),
+        _client(store_path, mock_server_embedder) as client,
+    ):
+        started = time.monotonic()
+        resp = client.post("/api/v1/retrieve", json={"query": DOCS[0], "k": 2})
+        waited = time.monotonic() - started
+    assert resp.status_code == 200
+    assert resp.json()["results"]
+    assert waited >= 1.0, f"answered in {waited:.2f}s — did not wait for the writer"
+
+
+def test_lock_held_past_the_wait_returns_updating_503(
+    store_path, mock_server_embedder, monkeypatch
+):
+    """A lock held longer than the accessor waits is a 503 that says the
+    index is being updated — not a 500 and not the "index is empty" text."""
+
+    monkeypatch.setattr(DuckDbAccessor, "_LOCK_WAIT", 0.5)
+    with (
+        _external_writer(store_path, hold_seconds=30),
+        _client(store_path, mock_server_embedder) as client,
+    ):
+        resp = client.post("/api/v1/retrieve", json={"query": DOCS[0], "k": 2})
+        stats = client.get("/api/v1/stats")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert "being updated" in body["detail"]
+    assert "not ready" not in body["detail"]
+    assert "write-locked" in body["reason"]
+    assert resp.headers.get("retry-after") == "5"
+    # /stats is advisory and never fails — it reports the gap instead, and
+    # the chat page shows "index updating…" for it.
+    assert stats.status_code == 200
+    assert stats.json()["stats_available"] is False
 
 
 def test_local_embedder_warmed_up_at_startup(store_path):

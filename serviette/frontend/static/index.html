@@ -308,7 +308,15 @@
   }
   async function refreshStats() {
     try {
-      const s = await fetch("/api/v1/stats").then(r => r.json());
+      const r = await fetch("/api/v1/stats");
+      if (!r.ok) return;
+      const s = await r.json();
+      if (s.stats_available === false) {
+        // The store could not be read just now (the indexer is starting or
+        // mid-write): say so instead of blanking the label.
+        document.getElementById("statsLabel").textContent = "index updating…";
+        return;
+      }
       const parts = [];
       if (s.backend) parts.push(s.backend);
       if (typeof s.chunks === "number") parts.push(s.chunks + " chunks");

@@ -17,6 +17,16 @@ class IndexNotReadyError(RuntimeError):
     instead of a stack trace."""
 
 
+class IndexBusyError(IndexNotReadyError):
+    """The store has data but cannot be read at this moment.
+
+    Raised when an embedded, single-writer store (DuckDB) is being written
+    by the indexer for longer than the accessor is willing to wait — the
+    first commit of a large corpus can hold the file lock for tens of
+    seconds. Same HTTP 503 as :class:`IndexNotReadyError`, with a message
+    saying the index is being updated rather than that it is empty."""
+
+
 def document_key(metadata: dict[str, Any] | None) -> str | None:
     """The identity of a chunk's source document, as the source reports it:
     ``path`` (fs, s3, sharepoint, pyfilesystem) or ``id`` / ``name`` (gdrive).

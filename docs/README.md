@@ -334,9 +334,12 @@ vectorized, columnar scan that answers in milliseconds for local corpora.
 Concurrency: DuckDB allows one read-write process *or* several read-only
 processes per file — never both. serviette resolves this with Pathway's
 `detach_between_batches`: the streaming indexer releases the file lock
-between minibatches, and the server's short-lived read-only connections (with
-a retry through brief lock windows) query it concurrently — live indexing and
-serving work on one file. On older Pathway builds without the flag, serviette
+between minibatches, and the server's short-lived read-only connections query
+it concurrently — live indexing and serving work on one file. A request that
+arrives while a batch is being committed waits for the lock (up to 30 s; the
+first commit of a large corpus can hold it for ~10 s), and only past that
+answers `503` with "the index is being updated — try again in a few seconds"
+(the chat shows the same text). On older Pathway builds without the flag, serviette
 warns and falls back to the hold-the-lock behavior (use `mode: static`
 there).
 

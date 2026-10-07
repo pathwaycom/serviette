@@ -36,7 +36,7 @@ from serviette.config.schema import (
 )
 from serviette.server import documents as docmode
 from serviette.server.accessors import AsyncVectorAccessor, build_accessor
-from serviette.server.accessors.abstract import IndexNotReadyError
+from serviette.server.accessors.abstract import IndexBusyError, IndexNotReadyError
 from serviette.server.decompose import decompose_query
 from serviette.server.embedder import AsyncEmbedder, build_embedder
 from serviette.server.llm import DEFAULT_SYSTEM_PROMPT, AsyncLLM, build_llm
@@ -289,20 +289,25 @@ def create_app(
 
     @app.exception_handler(IndexNotReadyError)
     async def _index_not_ready(_request, exc: IndexNotReadyError):
-        # The indexer simply hasn't written its first batch yet — a normal
-        # state during startup, not an error worth a stack trace.
+        # The indexer simply hasn't written its first batch yet, or is in
+        # the middle of writing one — normal states, not errors worth a
+        # stack trace.
         from fastapi.responses import JSONResponse
 
+        if isinstance(exc, IndexBusyError):
+            detail = (
+                "The index is being updated — the indexer is writing a batch "
+                "of documents right now. Try again in a few seconds."
+            )
+        else:
+            detail = (
+                "The index is not ready yet — the indexer is still "
+                "starting or hasn't written its first documents. "
+                "Try again in a moment."
+            )
         return JSONResponse(
             status_code=503,
-            content={
-                "detail": (
-                    "The index is not ready yet — the indexer is still "
-                    "starting or hasn't written its first documents. "
-                    "Try again in a moment."
-                ),
-                "reason": str(exc),
-            },
+            content={"detail": detail, "reason": str(exc)},
             headers={"Retry-After": "5"},
         )
     v1 = APIRouter(prefix="/api/v1")
