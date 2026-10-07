@@ -123,6 +123,28 @@ curl -X POST http://localhost:8989/api/v1/rag \
 { "answer": "...", "sources": [ {"text": "...", "metadata": {...}, "score": 0.91} ] }
 ```
 
+`GET /api/v1/documents` lists the indexed documents whose name or path
+contains `q` (`case_sensitive=true` to match case; the default ignores it).
+The chat page's **Documents** panel is built on it and asks only when a
+search is submitted, never on load — an index may hold tens of thousands of
+files. Over `limit` matches (default 100, at most 1000) only the counts are
+returned and the page asks to narrow the search:
+
+```bash
+curl 'http://localhost:8989/api/v1/documents?q=report&case_sensitive=false'
+```
+
+```jsonc
+{ "total": 1240, "matched": 2, "truncated": false,
+  "documents": [ {"id": "/data/docs/report_2026.pdf", "name": "report_2026.pdf",
+                  "metadata": {"path": "...", "modified_at": 1790000000, "size": 12345}, "chunks": 41}, ... ] }
+```
+
+`name` is what a person calls the document — the file name for folder, S3
+and SharePoint sources, the Drive title for Google Drive — and `id` is the
+full identity the source reports (path or Drive id). Pinecone cannot
+enumerate documents; there the endpoint answers 501.
+
 ---
 
 ## 3. Pathway License Key

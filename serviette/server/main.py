@@ -61,6 +61,24 @@ class RetrieveResponse(BaseModel):
     results: list[RetrieveResult]
 
 
+class DocumentEntry(BaseModel):
+    id: str
+    name: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    chunks: int
+
+
+class DocumentsResponse(BaseModel):
+    """``GET /api/v1/documents``: the indexed documents whose name or path
+    contains ``q``. The list is left out when more than ``limit`` match —
+    the caller narrows the search instead of rendering thousands of rows."""
+
+    total: int  # documents in the index
+    matched: int  # of them, matching the filter
+    truncated: bool  # matched > limit: ``documents`` was not sent
+    documents: list[DocumentEntry] = Field(default_factory=list)
+
+
 class RagResponse(BaseModel):
     answer: str
     sources: list[RetrieveResult]
@@ -613,6 +631,53 @@ def create_app(
             data["stats_available"] = False
         return data
 
+    async def list_documents(
+        q: str = "", case_sensitive: bool = False, limit: int = 100
+    ) -> DocumentsResponse:
+        """The document catalog, filtered by a fragment of the name or path.
+
+        Served from the accessor's cached catalog (nothing is scanned per
+        request), and only on demand — the chat page asks when the person
+        opens its document panel and searches, never on load.
+        """
+
+        if not accessor.supports_catalog:
+            raise HTTPException(
+                status_code=501,
+                detail=f"The '{backend_type}' backend cannot list its documents.",
+            )
+        limit = max(0, min(limit, 1000))
+        catalog = await accessor.list_documents()
+        needle = q if case_sensitive else q.casefold()
+
+        def matches(entry: dict[str, Any]) -> bool:
+            if not needle:
+                return True
+            haystacks = (docmode.document_name(entry), str(entry["id"]))
+            return any(
+                (needle in h) if case_sensitive else (needle in h.casefold())
+                for h in haystacks
+            )
+
+        matched = [entry for entry in catalog if matches(entry)]
+        truncated = len(matched) > limit
+        documents = (
+            []
+            if truncated
+            else [
+                DocumentEntry(
+                    id=str(e["id"]),
+                    name=docmode.document_name(e),
+                    metadata=e.get("metadata") or {},
+                    chunks=int(e.get("chunks", 0)),
+                )
+                for e in sorted(matched, key=docmode.document_name)
+            ]
+        )
+        return DocumentsResponse(
+            total=len(catalog), matched=len(matched), truncated=truncated, documents=documents
+        )
+
     async def ui_config() -> dict[str, str]:
         # Informational, consumed by the chat page; an empty api_url means
         # "same origin" (embedded mode). No secrets here.
@@ -622,6 +687,7 @@ def create_app(
     v1.post("/retrieve", response_model=RetrieveResponse)(retrieve)
     v1.post("/rag", response_model=RagResponse)(rag)
     v1.get("/stats")(stats)
+    v1.get("/documents", response_model=DocumentsResponse)(list_documents)
     v1.get("/config")(ui_config)
     app.include_router(v1)
 

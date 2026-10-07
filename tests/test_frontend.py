@@ -88,3 +88,21 @@ def test_proxy_handles_unreachable_api():
 def test_requires_frontend_section():
     with pytest.raises(ValueError, match="frontend"):
         create_app(ServietteConfig())
+
+
+def test_proxies_document_search_with_its_query_string():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(
+            200, json={"total": 3, "matched": 1, "truncated": False, "documents": []}
+        )
+
+    app = create_app(_config(), client=_mock_upstream(handler))
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/documents", params={"q": "Law", "case_sensitive": "true"})
+
+    assert resp.status_code == 200 and resp.json()["matched"] == 1
+    assert "/api/v1/documents?" in captured["url"]
+    assert "q=Law" in captured["url"] and "case_sensitive=true" in captured["url"]

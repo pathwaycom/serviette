@@ -110,6 +110,25 @@ def create_app(config: ServietteConfig, *, client: httpx.AsyncClient | None = No
             payload = {"stats_available": False}
         return JSONResponse(payload, status_code=upstream.status_code)
 
+    @app.get("/api/v1/documents")
+    async def documents(request: Request) -> JSONResponse:
+        # The document panel's search: forwarded with its query string.
+        assert client is not None  # created in lifespan before serving
+        try:
+            upstream = await client.get(
+                "/api/v1/documents", params=dict(request.query_params)
+            )
+        except httpx.HTTPError as exc:
+            return JSONResponse(
+                {"detail": f"Could not reach the API at {fe.api_url}: {exc}"},
+                status_code=502,
+            )
+        try:
+            payload = upstream.json()
+        except ValueError:
+            payload = {"detail": upstream.text}
+        return JSONResponse(payload, status_code=upstream.status_code)
+
     @app.post("/api/v1/rag")
     async def rag(request: Request) -> JSONResponse:
         return await _proxy("rag", request)

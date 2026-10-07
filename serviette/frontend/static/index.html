@@ -50,6 +50,24 @@
     background: var(--bg-soft); color: var(--text-soft); cursor: pointer; font-size: 15px; line-height: 1;
   }
   header .gear:hover { color: var(--text); }
+  header .docs-btn { width: auto; padding: 0 10px; font-size: 13px; }
+  /* Documents: a search panel over the catalog. Nothing is fetched until a
+     search is submitted — an index may hold tens of thousands of files. */
+  .docs-panel { position: absolute; top: 56px; right: 20px; z-index: 10; width: min(560px, calc(100vw - 40px));
+    max-height: calc(100vh - 90px); display: flex; flex-direction: column; padding: 14px 16px;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  .docs-panel[hidden] { display: none; }
+  .docs-panel h3 { margin: 0 0 10px; font-size: 13px; font-weight: 650; }
+  .docs-panel form { display: flex; gap: 8px; align-items: center; }
+  .docs-panel input[type=search] { flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-soft); color: var(--text); font-size: 13px; }
+  .docs-panel button.go { padding: 6px 12px; border: none; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-size: 13px; }
+  .docs-panel .opts { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--text-soft); }
+  .docs-panel .status { margin-top: 10px; font-size: 12px; color: var(--text-soft); }
+  .docs-panel .list { margin-top: 8px; overflow: auto; border-top: 1px solid var(--border); }
+  .docs-panel .doc { padding: 8px 4px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .docs-panel .doc .name { font-weight: 600; }
+  .docs-panel .doc .meta { font-size: 12px; color: var(--text-soft); word-break: break-all; }
   /* Settings: a small panel under the gear, closed by default — the knobs
      here are for the person who set serviette up, not for every reader. */
   .settings { position: absolute; top: 56px; right: 20px; z-index: 10; width: 320px; padding: 14px 16px;
@@ -135,8 +153,19 @@
     <div class="title">__APP_TITLE__</div>
     <div class="api" id="statsLabel" title="live index statistics"></div>
     <div class="api" id="apiLabel"></div>
+    <button class="gear docs-btn" id="docsBtn" type="button" title="Indexed documents" aria-expanded="false">Documents</button>
     <button class="gear" id="gear" type="button" title="Settings" aria-label="Settings" aria-expanded="false">⚙</button>
   </header>
+  <div class="docs-panel" id="docsPanel" hidden>
+    <h3>Indexed documents</h3>
+    <form id="docsForm">
+      <input type="search" id="docsQuery" placeholder="Part of a file name or path" autocomplete="off">
+      <button class="go" type="submit">Search</button>
+    </form>
+    <div class="opts"><input type="checkbox" id="docsCase"><label for="docsCase">Match case</label></div>
+    <div class="status" id="docsStatus">Type part of a name and press Search. Leave it empty to list everything (when the index is small enough to show).</div>
+    <div class="list" id="docsList"></div>
+  </div>
   <div class="settings" id="settings" hidden>
     <h3>Settings</h3>
     <label for="kInput">Document fragments per answer</label>
@@ -205,9 +234,61 @@
     settings.hidden = !open;
     gear.setAttribute("aria-expanded", String(open));
   });
+  // Documents panel: opened on demand, and it talks to the API only when a
+  // search is submitted.
+  const docsPanel = document.getElementById("docsPanel");
+  const docsBtn = document.getElementById("docsBtn");
+  const docsForm = document.getElementById("docsForm");
+  const docsQuery = document.getElementById("docsQuery");
+  const docsCase = document.getElementById("docsCase");
+  const docsStatus = document.getElementById("docsStatus");
+  const docsList = document.getElementById("docsList");
+  function closePanels() {
+    settings.hidden = true; gear.setAttribute("aria-expanded", "false");
+    docsPanel.hidden = true; docsBtn.setAttribute("aria-expanded", "false");
+  }
+  gear.addEventListener("click", function () {
+    const open = settings.hidden; closePanels();
+    settings.hidden = !open; gear.setAttribute("aria-expanded", String(open));
+  });
+  docsBtn.addEventListener("click", function () {
+    const open = docsPanel.hidden; closePanels();
+    docsPanel.hidden = !open; docsBtn.setAttribute("aria-expanded", String(open));
+    if (open) docsQuery.focus();
+  });
   document.addEventListener("click", function (e) {
-    if (!settings.hidden && !settings.contains(e.target) && e.target !== gear) {
-      settings.hidden = true; gear.setAttribute("aria-expanded", "false");
+    const inside = settings.contains(e.target) || docsPanel.contains(e.target) || e.target === gear || e.target === docsBtn;
+    if (!inside) closePanels();
+  });
+  function fmtDate(seconds) {
+    const n = Number(seconds);
+    if (!n) return "";
+    return new Date(n * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+  }
+  docsForm.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    docsList.innerHTML = "";
+    docsStatus.textContent = "Searching…";
+    const params = new URLSearchParams({ q: docsQuery.value, case_sensitive: String(docsCase.checked), limit: "100" });
+    try {
+      const res = await fetch("/api/v1/documents?" + params.toString());
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { docsStatus.textContent = (data && data.detail) || ("Request failed (" + res.status + ")"); return; }
+      if (data.truncated) {
+        docsStatus.textContent = data.matched + " of " + data.total + " indexed documents match — too many to show, narrow the search.";
+        return;
+      }
+      docsStatus.textContent = data.matched + " of " + data.total + " indexed documents" + (docsQuery.value ? " match" : "") + ".";
+      data.documents.forEach((d) => {
+        const div = document.createElement("div");
+        div.className = "doc";
+        const when = fmtDate(d.metadata && d.metadata.modified_at);
+        const meta = [d.id !== d.name ? d.id : "", when ? "modified " + when : "", d.chunks + " part" + (d.chunks === 1 ? "" : "s")].filter(Boolean);
+        div.innerHTML = '<div class="name">' + escapeHtml(d.name) + '</div><div class="meta">' + escapeHtml(meta.join(" · ")) + "</div>";
+        docsList.appendChild(div);
+      });
+    } catch (err) {
+      docsStatus.textContent = "Network error: could not reach the server.";
     }
   });
   let busy = false;

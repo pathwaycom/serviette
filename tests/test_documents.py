@@ -504,3 +504,71 @@ def test_backend_without_catalog_keeps_the_ordinary_path(
         resp = client.post("/api/v1/rag", json={"query": "see menu.md", "k": 1})
     assert resp.json()["mode"] == "search"
     assert llm.calls[0]["system_prompt"] is None and llm.raw_prompts == []
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/documents (the chat page's document panel)
+# ---------------------------------------------------------------------------
+
+
+def _documents(store_path, embedder, **params):
+    config = ServietteConfig(
+        vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
+        embedder=EmbedderConfig(type="openai"),
+        server=ServerConfig(serve_frontend=False),
+    )
+    app = create_app(config, embedder=embedder, accessor=DuckDbAccessor(config.vector_db))
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/documents", params=params)
+    return resp
+
+
+def test_documents_endpoint_filters_by_name_fragment(store_path, mock_server_embedder):
+    body = _documents(store_path, mock_server_embedder, q="law").json()
+    assert (body["total"], body["matched"], body["truncated"]) == (5, 2, False)
+    assert [d["name"] for d in body["documents"]] == ["law_2023.txt", "law_2024.txt"]
+    entry = body["documents"][0]
+    assert entry["id"] == "/docs/law_2023.txt" and entry["chunks"] == 7
+    assert entry["metadata"]["modified_at"] == 1_700_000_000
+
+    # The path counts too, so a folder name finds its files.
+    body = _documents(store_path, mock_server_embedder, q="archive").json()
+    assert [d["id"] for d in body["documents"]] == ["/archive/journal.pdf"]
+
+
+def test_documents_endpoint_case_sensitivity_is_opt_in(store_path, mock_server_embedder):
+    assert _documents(store_path, mock_server_embedder, q="LAW").json()["matched"] == 2
+    assert _documents(
+        store_path, mock_server_embedder, q="LAW", case_sensitive="true"
+    ).json()["matched"] == 0
+    assert _documents(
+        store_path, mock_server_embedder, q="law_2024", case_sensitive="true"
+    ).json()["matched"] == 1
+
+
+def test_documents_endpoint_withholds_a_long_list(store_path, mock_server_embedder):
+    """Over the limit only the counts are sent: the page asks the person to
+    narrow the search instead of rendering thousands of rows."""
+
+    body = _documents(store_path, mock_server_embedder, limit=2).json()
+    assert body["total"] == 5 and body["matched"] == 5
+    assert body["truncated"] is True and body["documents"] == []
+    body = _documents(store_path, mock_server_embedder, q="journal", limit=2).json()
+    assert body["truncated"] is False and len(body["documents"]) == 2
+
+
+def test_documents_endpoint_without_a_catalog(store_path, mock_server_embedder):
+    class NoCatalogAccessor(DuckDbAccessor):
+        supports_catalog = False
+
+    config = ServietteConfig(
+        vector_db=DuckDbConfig(type="duckdb", path=str(store_path)),
+        embedder=EmbedderConfig(type="openai"),
+        server=ServerConfig(serve_frontend=False),
+    )
+    app = create_app(
+        config, embedder=mock_server_embedder, accessor=NoCatalogAccessor(config.vector_db)
+    )
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/documents")
+    assert resp.status_code == 501 and "cannot list" in resp.json()["detail"]
