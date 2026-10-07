@@ -9,6 +9,7 @@ Usage:
   python -m tests._milvus_writer write    <uri> <collection> <config-json>
   python -m tests._milvus_writer paths    <uri> <collection>
   python -m tests._milvus_writer retrieve <uri> <collection> <query>
+  python -m tests._milvus_writer stats    <uri> <collection>
 """
 
 from __future__ import annotations
@@ -49,6 +50,20 @@ def _paths(uri: str, collection: str) -> object:
     return sorted(Path(r["metadata"]["path"]).name for r in rows)
 
 
+def _stats(uri: str, collection: str) -> object:
+    from serviette.config.schema import MilvusConfig
+    from serviette.server.accessors.milvus import MilvusAccessor
+
+    async def go():
+        accessor = MilvusAccessor(MilvusConfig(uri=uri, collection=collection))
+        try:
+            return await accessor.stats()
+        finally:
+            await accessor.close()
+
+    return asyncio.run(go())
+
+
 def _retrieve(uri: str, collection: str, query: str) -> object:
     from serviette.config.schema import MilvusConfig
     from serviette.server.accessors.milvus import MilvusAccessor
@@ -72,6 +87,8 @@ def main() -> None:
         result = _paths(sys.argv[2], sys.argv[3])
     elif action == "retrieve":
         result = _retrieve(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif action == "stats":
+        result = _stats(sys.argv[2], sys.argv[3])
     else:  # pragma: no cover
         raise SystemExit(f"unknown action {action!r}")
     print("__RESULT__" + json.dumps(result))

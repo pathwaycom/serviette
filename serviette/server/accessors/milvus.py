@@ -84,10 +84,17 @@ class MilvusAccessor(KeywordHybridMixin, AsyncVectorAccessor):
     # -- hybrid hooks (KeywordHybridMixin) ------------------------------------
 
     async def _hybrid_count(self) -> int:
+        # Not ``get_collection_stats``: its ``row_count`` covers flushed
+        # (sealed) segments only. The Pathway writer upserts without flushing
+        # — correctly, Milvus discourages per-batch flushes — and a small
+        # corpus never reaches the auto-flush thresholds, so that count stays
+        # 0 while search sees every row. ``count(*)`` includes growing
+        # segments and is Milvus's own recommendation for an exact count.
         client = await self._ensure_client()
-        info = await client.get_collection_stats(self._collection)
-        count = info.get("row_count") if isinstance(info, dict) else None
-        return int(count or 0)
+        rows = await client.query(
+            collection_name=self._collection, filter="", output_fields=["count(*)"]
+        )
+        return int(rows[0].get("count(*)", 0)) if rows else 0
 
     async def _hybrid_fetch_all(self, with_embeddings: bool) -> list[dict[str, Any]]:
         # The async client has no full-scan iterator; a short-lived sync client

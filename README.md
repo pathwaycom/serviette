@@ -444,7 +444,7 @@ with cosine ~1.0), delete a file, re-index, and verify its vectors are gone
 |---|---|---|
 | DuckDB | `test_integration_duckdb.py` | embedded — runs everywhere |
 | pgvector | `test_integration_pgvector.py` | `pgvector/pgvector` Docker container |
-| Milvus | `test_integration_milvus.py` | embedded Milvus Lite engine |
+| Milvus | `test_integration_milvus.py` | embedded Milvus Lite engine; set `SERVIETTE_TEST_MILVUS_URI=http://host:19530` to run the same tests against a Milvus server (Lite has no growing/sealed segments, so it cannot catch stats-counting bugs) |
 | Qdrant | `test_integration_qdrant.py` | `qdrant/qdrant` Docker container |
 | ChromaDB | `test_integration_chroma.py` | `chromadb/chroma` Docker container |
 | Weaviate | `test_integration_weaviate.py` | `semitechnologies/weaviate` Docker container |

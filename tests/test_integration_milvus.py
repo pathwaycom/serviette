@@ -27,8 +27,9 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("milvus_lite", reason="milvus-lite not installed")
 pytest.importorskip("pymilvus", reason="pymilvus not installed")
+if not os.environ.get("SERVIETTE_TEST_MILVUS_URI"):
+    pytest.importorskip("milvus_lite", reason="milvus-lite not installed")
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -85,9 +86,30 @@ def _retrieve(uri, query, cache_dir) -> list[dict]:
     return _driver(["retrieve", uri, COLLECTION, query], cache_dir)
 
 
+def _stats(uri, cache_dir) -> dict:
+    return _driver(["stats", uri, COLLECTION], cache_dir)
+
+
 @pytest.fixture
 def uri(tmp_path):
-    return str(tmp_path / "milvus.db")
+    """Milvus Lite file by default; ``SERVIETTE_TEST_MILVUS_URI`` points the
+    same tests at a real server (``milvus run standalone``). Lite differs
+    from the server in ways that matter here — it has no growing/sealed
+    segments (``row_count`` is exact without a flush) and ranks by L2 — so
+    the server run is the one that catches stats regressions."""
+
+    server = os.environ.get("SERVIETTE_TEST_MILVUS_URI")
+    if not server:
+        return str(tmp_path / "milvus.db")
+    from pymilvus import MilvusClient
+
+    client = MilvusClient(uri=server)
+    try:
+        if client.has_collection(COLLECTION):
+            client.drop_collection(COLLECTION)
+    finally:
+        client.close()
+    return server
 
 
 def test_write_and_retrieve_ranking(uri, tmp_path):
@@ -118,7 +140,11 @@ def test_deletion_removes_rows(uri, tmp_path):
 
     _write(uri, config, cache)
     assert _paths(uri, cache) == ["a.txt", "b.txt"]
+    # The writer never flushes, so the rows sit in a growing segment:
+    # ``get_collection_stats`` would report 0 here — stats must count them.
+    assert _stats(uri, cache)["chunks"] == 2
 
     (docs / "b.txt").unlink()
     _write(uri, config, cache)
     assert _paths(uri, cache) == ["a.txt"]  # b's vectors removed
+    assert _stats(uri, cache)["chunks"] == 1
