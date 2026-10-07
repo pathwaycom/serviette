@@ -1,11 +1,11 @@
-"""Tests for the quickstart wizard config generation."""
+"""Tests for the wizard config generation."""
 
 from __future__ import annotations
 
 import yaml
 
 from serviette.config.schema import ServietteConfig, load_config_dict
-from serviette.quickstart.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
+from serviette.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
 
 BASE = {
     "license_key": "test-license-key-123",

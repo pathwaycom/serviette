@@ -19,8 +19,8 @@ from types import SimpleNamespace
 import pytest
 
 from serviette.config.schema import EmbedderConfig
-from serviette.quickstart.wizard import ScriptedPrompter, Wizard
 from serviette.server.embedder import build_embedder as build_server_embedder
+from serviette.wizard import ScriptedPrompter, Wizard
 
 INDEXER_ONLY_KEYS = ("batch_size", "truncation_keep_strategy", "retries", "capacity")
 
@@ -319,7 +319,7 @@ async def test_sentence_transformer_server_mirrors_indexer_kwargs(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# quickstart
+# wizard
 # ---------------------------------------------------------------------------
 
 

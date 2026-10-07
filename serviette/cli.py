@@ -4,7 +4,8 @@ Subcommands:
   serviette indexer    --config FILE   Build & run the Pathway indexing graph
   serviette server     --config FILE   Start the FastAPI retrieval/RAG server
   serviette up         --config FILE   Run indexer + server together (dev/demo)
-  serviette quickstart                 Interactive config-generation wizard
+  serviette demo                       Zero-to-chat demo on a bundled corpus
+  serviette wizard                     Interactive config-generation wizard
 """
 
 from __future__ import annotations
@@ -40,20 +41,29 @@ def main(argv: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(prog=APP_NAME, description=__doc__)
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(
+        dest="command",
+        required=True,
+        # Spelled out so the hidden alias below stays out of the usage line.
+        metavar="{indexer,server,up,demo,frontend,wizard}",
+    )
     sub.add_parser("indexer", add_help=False, help="Run the indexer")
     sub.add_parser("server", add_help=False, help="Run the server")
     sub.add_parser("up", add_help=False, help="Run indexer + server together")
     sub.add_parser("demo", add_help=False, help="Zero-to-chat demo on a bundled corpus")
     sub.add_parser("frontend", add_help=False, help="Run the web chat frontend")
-    sub.add_parser("quickstart", add_help=False, help="Interactive config wizard")
+    sub.add_parser("wizard", add_help=False, help="Interactive config wizard")
+    # The wizard's former name; no ``help`` keeps it out of --help. Dropped
+    # in a later release — "quickstart" promised the fastest path, which is
+    # `demo`.
+    sub.add_parser("quickstart", add_help=False)
 
     # Parse only the first token so each subcommand owns the rest of argv.
     args, rest = parser.parse_known_args(argv)
 
     if args.command in ("indexer", "up", "demo"):
         _ensure_pathway_connectors()
-    # Every subcommand but quickstart loads a config; the import is here
+    # Every subcommand but the wizard loads a config; the import is here
     # rather than at module level to keep `--version` free of pydantic.
     from serviette.config.schema import MissingEnvVarError
 
@@ -91,10 +101,10 @@ def _dispatch(command: str, rest: list[str]) -> None:
 
         frontend_args = _parse_config_arg("frontend", rest)
         run(load_frontend_config(frontend_args.config))
-    elif args.command == "quickstart":
-        from serviette.quickstart.wizard import main as quickstart_main
+    elif args.command in ("wizard", "quickstart"):
+        from serviette.wizard import main as wizard_main
 
-        quickstart_main(rest)
+        wizard_main(rest)
 
 
 def _parse_config_arg(prog: str, rest: list[str]) -> argparse.Namespace:

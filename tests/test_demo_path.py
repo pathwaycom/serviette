@@ -1,4 +1,4 @@
-"""CI smoke test for the demo path: quickstart -> up -> retrieve -> live add.
+"""CI smoke test for the demo path: wizard -> up -> retrieve -> live add.
 
 Drives the exact sequence a presenter runs: the wizard generates a config
 (DuckDB minimal happy path), ``serviette up`` supervises indexer + server, the
@@ -7,7 +7,7 @@ up in results within seconds (streaming + DuckDB lock detach).
 
 The only deviation from the generated config is the embedder, swapped for the
 hermetic ``mock`` so CI needs no torch download; every other line is exactly
-what quickstart wrote.
+what the wizard wrote.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import httpx
 import pytest
 import yaml
 
-from serviette.quickstart.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
+from serviette.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
 
 pytestmark = pytest.mark.slow
 
@@ -48,7 +48,7 @@ def test_demo_path_smoke(tmp_path, tcp_port, monkeypatch):
     alpha = "cats purr and chase mice in the sunny yard"
     (docs / "a.txt").write_text(alpha)
 
-    # -- 1. quickstart: the minimal DuckDB happy path -------------------------
+    # -- 1. wizard: the minimal DuckDB happy path -------------------------
     tokens = iter(
         [
             "1",            # universal config

@@ -1,7 +1,7 @@
 """Shared test fixtures.
 
 Kept import-light at module scope: ``pathway`` is imported lazily inside the
-fixtures that need it, so the cache/server/quickstart tests run without pulling
+fixtures that need it, so the cache/server/wizard tests run without pulling
 in the heavy Pathway/xpack stack.
 """
 

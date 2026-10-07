@@ -43,7 +43,7 @@ pip install "serviette[local]"   # [local] = free local embeddings, the wizard's
 export PATHWAY_LICENSE_KEY=...   # the free Pathway license (see above); the wizard picks it up from here
 export OPENAI_API_KEY=sk-...     # powers generated answers; omit to run keyless (answers quote the retrieved snippets)
 
-serviette quickstart                       # interactive config wizard
+serviette wizard                           # interactive config wizard
 serviette up --config config.yaml          # indexer + server together → http://localhost:8989
 ```
 
@@ -62,7 +62,7 @@ curl -X POST http://localhost:8989/api/v1/retrieve \
 ## Highlights
 
 - **No code.** Configure everything in one YAML file (or generate it with
-  `serviette quickstart`).
+  `serviette wizard`).
 - **Any vector DB — 8 backends.** DuckDB (embedded, zero setup — the default),
   pgvector, Qdrant, Milvus, ChromaDB, Weaviate, Pinecone and MongoDB Atlas
   Vector Search. Every backend is written through **Pathway's native
@@ -371,7 +371,7 @@ Caddy example lives in [docs](https://github.com/pathwaycom/serviette/blob/main/
 
 ## Documentation
 
-Full installation, quickstart, configuration reference, persistence,
+Full installation, the config wizard, configuration reference, persistence,
 architecture and scaling notes live in **[docs/README.md](https://github.com/pathwaycom/serviette/blob/main/docs/README.md)**.
 
 ## Development

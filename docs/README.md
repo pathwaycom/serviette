@@ -31,7 +31,7 @@ pip install "serviette[local]"
 ```
 
 The `local` extra brings sentence-transformers — the free, credential-free
-embedder that `serviette quickstart` selects by default. It pulls the
+embedder that `serviette wizard` selects by default. It pulls the
 PyTorch stack (~4.5 GB); if you intend to embed with OpenAI instead, a
 plain `pip install serviette` is enough (pick `openai` in the wizard).
 From a checkout, `pip install -e ".[dev,local]"` — see the README's
@@ -45,12 +45,13 @@ one extra per vector-DB client (`qdrant`, `pgvector`, …, or `all`).
 
 ---
 
-## 2. Quickstart
+## 2. Config wizard
 
-The fastest way to get a valid config is the interactive wizard:
+The fastest way to a chat is `serviette demo` (see the README); the fastest
+way to a config for *your* documents is the interactive wizard:
 
 ```bash
-serviette quickstart
+serviette wizard
 ```
 
 It asks only what it must (the DuckDB + local-embeddings happy path is seven
@@ -165,7 +166,7 @@ out of the file — set it in the environment:
 export PATHWAY_LICENSE_KEY="your-key-here"
 ```
 
-`serviette quickstart` notices an exported `PATHWAY_LICENSE_KEY` and offers to
+`serviette wizard` notices an exported `PATHWAY_LICENSE_KEY` and offers to
 write the `${PATHWAY_LICENSE_KEY}` reference instead of asking for the key;
 `serviette demo` uses the variable the same way.
 

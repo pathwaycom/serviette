@@ -82,7 +82,7 @@ T_PAD = 24
 T_LINE_H = 30
 
 SCRIPT_UP = [
-    ("cmd", "serviette quickstart"),
+    ("cmd", "serviette wizard"),
     ("out", "  ? Where are your documents?   › ./docs", T_OUT),
     ("out", "  ? Vector database             › DuckDB (embedded, zero setup)", T_OUT),
     ("out", "  ? Embeddings                  › local · no API key needed", T_OUT),
@@ -331,7 +331,7 @@ def _onto_canvas(img: Image.Image, bg: tuple[int, int, int]) -> Image.Image:
 
 
 def render_combined_gif() -> None:
-    # Beat 1: quickstart + up. Beat 2: ask about the Team tier -> 129 EUR.
+    # Beat 1: wizard + up. Beat 2: ask about the Team tier -> 129 EUR.
     # Beat 3: sed edits pricing.md. Beat 4: same question -> 199 EUR.
     t1_frames, t1_durs, printed = build_terminal(SCRIPT_UP)
     c1_frames, c1_durs = build_chat([], ANSWER_BEFORE, "indexed 41 min ago")
