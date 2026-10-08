@@ -1,8 +1,8 @@
 # serviette
 
 <p align="center">
-  <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/v/serviette" alt="PyPI version"></a>
-  <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/pyversions/serviette" alt="Python versions"></a>
+  <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/v/serviette?logo=pypi&logoColor=white" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/pyversions/serviette?logo=python&logoColor=white" alt="Python versions"></a>
   <a href="https://github.com/pathwaycom/serviette/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pathwaycom/serviette" alt="License: MIT"></a>
   <a href="https://github.com/pathwaycom/serviette/actions/workflows/ci.yml"><img src="https://github.com/pathwaycom/serviette/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
