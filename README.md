@@ -1,6 +1,6 @@
 # serviette
 
-<p>
+<p align="center">
   <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/v/serviette" alt="PyPI version"></a>
   <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/pyversions/serviette" alt="Python versions"></a>
   <a href="https://github.com/pathwaycom/serviette/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pathwaycom/serviette" alt="License: MIT"></a>
