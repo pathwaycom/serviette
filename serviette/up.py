@@ -23,10 +23,12 @@ components separately (see docs/README "Scaling").
 from __future__ import annotations
 
 import logging
+import os
 import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 from serviette.config.schema import (
@@ -52,9 +54,61 @@ _TAIL_LINES = 80
 # indented), Rust panics, a child's own print() — passes through.
 _ROUTINE_LINE = re.compile(r"^(INFO|DEBUG)\b|^\s*(Batches|Loading weights):\s")
 
+# Lines of the indexer's output that prove it is working on documents — the
+# per-document ``parsing …`` / ``parsed …`` lines of serviette's parse UDF,
+# the xpack parsers' own progress, non-zero input batches reaching the
+# engine, and the embedder's progress bar. ``_wait_for_index`` measures its
+# timeout from the last such line, so a slow parse is not mistaken for an
+# index that will never fill (see ``Activity`` below).
+_ACTIVITY_LINE = re.compile(
+    r"\b(parsing|parsed) \S|starting to parse|completed parsing"
+    r"|\b[1-9]\d* entries \(\d+ minibatch|^\s*Batches:\s"
+)
+_EMBEDDING_LINE = re.compile(r"^\s*Batches:\s")
+_PARSING_LINE = re.compile(r":parsing (?P<name>.+?) \([^)]*\)\s*$")
+_PARSED_LINE = re.compile(r":parsed (?P<name>.+?): \d+ chars in ")
+
 
 def _is_routine(line: str) -> bool:
     return bool(_ROUTINE_LINE.match(line)) or not line.strip()
+
+
+class Activity:
+    """What the indexer was last seen doing, gathered from its output.
+
+    Updated by the output-forwarding thread, read by ``_wait_for_index``:
+    ``last_seen`` is the time of the last line matching ``_ACTIVITY_LINE``
+    (the spawn time until then), ``current`` the document being parsed, if
+    any, and ``parsed`` how many documents finished parsing."""
+
+    def __init__(self) -> None:
+        self.last_seen = time.monotonic()
+        self.current: str | None = None
+        self.parsed = 0
+        self.embedding = False  # the embedder's progress bar was the last thing seen
+        self._lock = threading.Lock()
+
+    def observe(self, line: str) -> None:
+        if not _ACTIVITY_LINE.search(line):
+            return
+        with self._lock:
+            self.last_seen = time.monotonic()
+            self.embedding = bool(_EMBEDDING_LINE.match(line))
+            if m := _PARSING_LINE.search(line):
+                self.current = m.group("name")
+            elif m := _PARSED_LINE.search(line):
+                self.parsed += 1
+                if self.current == m.group("name"):
+                    self.current = None
+
+    def describe(self) -> str:
+        with self._lock:
+            parsed = f"{self.parsed} parsed so far" if self.parsed else ""
+            if self.current is not None:
+                return f"parsing {os.path.basename(self.current)}" + (f" ({parsed})" if parsed else "")
+            if self.embedding:
+                return "embedding" + (f" ({parsed})" if parsed else "")
+            return f"{self.parsed} documents parsed" if self.parsed else "waiting for the first documents"
 
 
 def _spawn(
@@ -75,8 +129,6 @@ def _spawn(
     that its stdout is a pipe.
     """
 
-    import os
-    import threading
     from collections import deque
 
     proc = subprocess.Popen(
@@ -88,17 +140,20 @@ def _spawn(
         errors="replace",
     )
     tail: deque[str] = deque(maxlen=_TAIL_LINES)
+    activity = Activity()
 
     def forward() -> None:
         assert proc.stdout is not None
         for line in iter(proc.stdout.readline, ""):
             tail.append(line.rstrip("\n"))
+            activity.observe(line)
             if verbose or not _is_routine(line):
                 sys.stderr.write(line)
                 sys.stderr.flush()
 
     threading.Thread(target=forward, name=f"up-{command}-output", daemon=True).start()
     proc.tail = tail  # type: ignore[attr-defined]
+    proc.activity = activity  # type: ignore[attr-defined]
     return proc
 
 
@@ -201,8 +256,6 @@ def _confirm_fingerprint(config: ServietteConfig) -> dict[str, str]:
     just asked before anything else is printed. Returns the environment for
     the child, which tells it the answer is already given.
     """
-
-    import os
 
     from serviette.indexer.fingerprint import ACCEPT_ENV, check_fingerprint
 
@@ -337,11 +390,20 @@ def _wait_for_index(
     running in streaming mode — without the bound ``up`` would heartbeat
     forever. On expiry the server starts over the empty index with a
     warning; whatever becomes indexable later shows up live.
+
+    Activity: the bound is measured from the indexer's last sign of work
+    (``indexer.activity``, fed by its output — see ``_ACTIVITY_LINE``), not
+    from the start. Parsing a few large PDFs takes minutes and produces no
+    chunk until the first one is through; a timeout counted from the start
+    fired in the middle of that and announced an empty index that was about
+    to fill. The empty-text case is unchanged: parsing finishes quickly,
+    then nothing happens for ``timeout`` seconds.
     """
 
     started = time.monotonic()
     last_beat = 0.0
     timeout = config.up.index_wait_timeout
+    activity: Activity | None = getattr(indexer, "activity", None)
     allow_empty = _sources_look_empty(config)
     if allow_empty:
         logger.info(
@@ -360,21 +422,24 @@ def _wait_for_index(
             # decide, the server can legitimately serve an empty index.
             return None
         now = time.monotonic()
-        if timeout is not None and now - started >= timeout:
+        last_sign = max(started, activity.last_seen) if activity is not None else started
+        if timeout is not None and now - last_sign >= timeout:
             logger.warning(
-                "up: no document produced a chunk within %.0fs — starting the "
-                "server over an empty index anyway. Check the indexer log "
-                "above for skipped or failed documents (a parser missing its "
-                "package or API key, fetch errors); documents keep being "
-                "indexed live. Tune or disable this with up.index_wait_timeout.",
-                now - started,
+                "up: no document produced a chunk, and the indexer showed no "
+                "activity for %.0fs — starting the server over an empty index "
+                "anyway. Check the indexer log above for skipped or failed "
+                "documents (a parser missing its package or API key, fetch "
+                "errors); documents keep being indexed live. Tune or disable "
+                "this with up.index_wait_timeout.",
+                now - last_sign,
             )
             return None
         if now - last_beat >= _WAIT_HEARTBEAT:
             last_beat = now
             logger.info(
-                "up: indexing in progress — the chat/API server starts once "
+                "up: indexing in progress — %s; the chat/API server starts once "
                 "the first documents are ready (%.0fs elapsed)",
+                activity.describe() if activity is not None else "waiting for the first documents",
                 now - started,
             )
         time.sleep(1.0)

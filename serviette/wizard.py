@@ -17,6 +17,7 @@ the I/O so it can be unit-tested without a terminal.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from abc import ABC, abstractmethod
@@ -58,6 +59,58 @@ _ENV_REF = {
     "bedrock": None,
     "sentence_transformer": None,
 }
+
+# Embedders whose Python package is an optional extra: (module to probe,
+# install command). The others ride on packages the base install has.
+_EMBEDDER_PACKAGE = {
+    "sentence_transformer": (
+        "sentence_transformers",
+        'pip install "serviette[local]" --extra-index-url https://download.pytorch.org/whl/cpu',
+    ),
+    "gemini": ("google.generativeai", 'pip install "serviette[gemini]"'),
+    "bedrock": ("boto3", 'pip install "serviette[bedrock]"'),
+}
+
+
+def _installed(module: str) -> bool:
+    return importlib.util.find_spec(module) is not None
+
+
+# Local (sentence-transformers) models the wizard offers, with what a user
+# needs to pick one: languages, speed, vector size. ``prefixes`` are the
+# query/passage markers a model was trained with (E5 family); the wizard
+# writes them into the config so both sides apply them. The last entry lets
+# the user type any Hugging Face model id.
+LOCAL_MODELS: list[tuple[str | None, str, dict[str, str]]] = [
+    (
+        "sentence-transformers/all-MiniLM-L6-v2",
+        (
+            "all-MiniLM-L6-v2 — English only · smallest and fastest · 384-dim "
+            "(reads the first 256 tokens of each chunk)"
+        ),
+        {},
+    ),
+    (
+        "intfloat/multilingual-e5-small",
+        (
+            "multilingual-e5-small — ~100 languages (French, German, Spanish, Polish, "
+            "Russian, Chinese, …) · same speed class · 384-dim · pick this for "
+            "non-English or mixed documents"
+        ),
+        {"query_prefix": "query: ", "document_prefix": "passage: "},
+    ),
+    (
+        "BAAI/bge-m3",
+        (
+            "bge-m3 — 100+ languages · highest quality, long chunks (8k tokens) · "
+            "1024-dim · ~2.3 GB download, several times slower on CPU"
+        ),
+        {},
+    ),
+    (None, "Other — type a Hugging Face model id", {}),
+]
+LOCAL_MODEL_LABELS = [label for _, label, _ in LOCAL_MODELS]
+
 
 # Simple, brand-neutral defaults suggested by the wizard.
 DEFAULT_COLLECTION = "embeddings"
@@ -192,6 +245,7 @@ def _embedder_section(answers: dict[str, Any]) -> dict[str, Any]:
     section: dict[str, Any] = {"type": etype}
     if answers.get("embedder_model"):
         section["model"] = answers["embedder_model"]
+    section.update(answers.get("embedder_prefixes") or {})
     api_key = answers.get("embedder_api_key", _ENV_REF.get(etype))
     if api_key:
         section["api_key"] = api_key
@@ -438,6 +492,34 @@ class Wizard:
             self.p.info(f"  Created {path!r}.")
             return True
 
+    def _embedder_available(self, etype: str) -> bool:
+        """Warn when the chosen embedder's package is not installed; True
+        keeps the choice, False means pick another embedder.
+
+        Without this the wizard finishes fine and the missing package only
+        surfaces as a ModuleNotFoundError deep in the indexer at ``serviette
+        up`` — a plain ``pip install serviette`` (the README's first command)
+        has no sentence-transformers, yet that is the wizard's default."""
+
+        probe = _EMBEDDER_PACKAGE.get(etype)
+        if probe is None or _installed(probe[0]):
+            return True
+        module, command = probe
+        self.p.info(
+            f"  ! {etype} needs the {module.split('.')[0]} package, which is not installed "
+            f"in this Python environment. Install it before running the stack:\n"
+            f"      {command}"
+        )
+        choice = self.p.select(
+            "What now?",
+            [
+                "Keep it (I will install the package before `serviette up`)",
+                "Choose another embedder",
+            ],
+            default_index=0,
+        )
+        return choice == 0
+
     def _collect_source(self, stype: str) -> dict[str, Any]:
         if stype == "fs":
             while True:
@@ -626,10 +708,21 @@ class Wizard:
 
         self._section("Embedder")
         emb_idx = self.p.select("Embedder:", EMBEDDER_LABELS, default_index=0)
+        while not self._embedder_available(EMBEDDER_CHOICES[emb_idx]):
+            emb_idx = self.p.select("Embedder:", EMBEDDER_LABELS, default_index=emb_idx)
         answers["embedder_type"] = EMBEDDER_CHOICES[emb_idx]
 
-        # 9) A keyless local embedder needs no further questions: the default
-        # model applies (changeable later in the YAML).
+        # 9) The local embedder needs no key, but the model decides which
+        # languages work: the default is English-only, and a French corpus
+        # with it looks like "the context does not contain the information".
+        if answers["embedder_type"] == "sentence_transformer":
+            self._section("Embedding model")
+            model_idx = self.p.select("Embedding model:", LOCAL_MODEL_LABELS, default_index=0)
+            model, _label, prefixes = LOCAL_MODELS[model_idx]
+            if model is None:
+                model = self.p.text("Hugging Face model id", required=True)
+            answers["embedder_model"] = model
+            answers["embedder_prefixes"] = prefixes
         env_ref = _ENV_REF.get(answers["embedder_type"])
         if env_ref is not None:
             self._section("Embedder model + API key")

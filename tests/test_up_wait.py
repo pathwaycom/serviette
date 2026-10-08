@@ -8,6 +8,8 @@ seconds — a URL printed at spawn time sends the user to "connection refused".
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from serviette import up
@@ -441,3 +443,82 @@ def test_quiet_mode_keeps_hidden_lines_for_the_failure_report(monkeypatch, capsy
     assert list(proc.tail) == ["INFO:engine:routine", "Traceback: boom"]
     err = capsys.readouterr().err
     assert "Traceback: boom" in err and "routine" not in err
+
+
+# -- activity-based timeout ------------------------------------------------
+#
+# The timeout counts from the indexer's last sign of work, not from the start:
+# a few large PDFs parse for minutes without producing a chunk, and a timeout
+# counted from the start announced an empty index that was about to fill.
+
+
+def test_activity_lines_are_recognised():
+    act = up.Activity()
+    t0 = act.last_seen
+    for quiet in (
+        "INFO:pathway_engine.connectors.monitoring:source_0: 0 entries (4 minibatch(es)) have been sent",
+        "INFO:pathway_engine.persistence.input_snapshot:Persisting a chunk of 105 entries",
+        "INFO:httpx:HTTP Request: GET http://127.0.0.1:8989/health",
+        "",
+    ):
+        act.observe(quiet)
+    assert act.last_seen == t0
+    assert act.describe() == "waiting for the first documents"
+
+    act.observe("INFO:serviette.indexer.graph:parsing /data/eu-1272-2008.pdf (18.3 MB)")
+    assert act.last_seen > t0
+    assert act.describe() == "parsing eu-1272-2008.pdf"
+    act.observe("INFO:serviette.indexer.graph:parsed /data/eu-1272-2008.pdf: 412000 chars in 47.2s")
+    assert act.describe() == "1 documents parsed"
+    act.observe("INFO:serviette.indexer.graph:parsing /data/b.pdf (2.0 MB)")
+    assert act.describe() == "parsing b.pdf (1 parsed so far)"
+
+    for busy in (
+        "INFO:pathway.xpacks.llm.parsers:PypdfParser starting to parse a document of length: 312",
+        "INFO:pathway_engine.connectors.monitoring:source_0: 4 entries (2 minibatch(es)) have been sent",
+    ):
+        before = act.last_seen
+        act.observe(busy)
+        assert act.last_seen >= before
+    act.observe("INFO:serviette.indexer.graph:parsed /data/b.pdf: 10 chars in 0.1s")
+    act.observe("Batches: 100%|██████████| 1/1 [00:00<00:00,  6.13it/s]")
+    assert act.describe() == "embedding (2 parsed so far)"
+
+
+def test_index_wait_timeout_counts_from_the_last_activity(monkeypatch, caplog):
+    """Steady parsing activity keeps the wait alive past the timeout; the
+    warning fires only once the indexer has been silent for that long."""
+
+    monkeypatch.setattr("serviette.up._sources_look_empty", lambda _c: False)
+    caplog.set_level(logging.INFO, logger="serviette.up")
+    _fake_clock(monkeypatch, step=10.0)
+    proc = FakeProc([None])
+    proc.activity = up.Activity()
+    probes = 0
+
+    def ready(_config, allow_empty):
+        nonlocal probes
+        probes += 1
+        # Busy for the first ~400s (far past the 100s timeout), then silent.
+        if probes <= 40:
+            proc.activity.observe(f"INFO:serviette.indexer.graph:parsing /d/{probes}.pdf (1.0 MB)")
+        return False
+
+    result = _wait_for_index(_config(index_wait_timeout=100.0), proc, ready=ready)
+    assert result is None
+    assert probes > 40, "the timeout fired while the indexer was still busy"
+    assert "showed no activity for" in caplog.text
+    assert "parsing 40.pdf" in caplog.text  # the heartbeat says what is going on
+
+
+def test_index_wait_without_activity_tracking_counts_from_the_start(monkeypatch, caplog):
+    """A process without ``.activity`` (older callers, tests) keeps the plain
+    start-based bound."""
+
+    monkeypatch.setattr("serviette.up._sources_look_empty", lambda _c: False)
+    _fake_clock(monkeypatch)
+    result = _wait_for_index(
+        _config(index_wait_timeout=100.0), FakeProc([None]), ready=lambda _c, allow_empty: False
+    )
+    assert result is None
+    assert "showed no activity for" in caplog.text

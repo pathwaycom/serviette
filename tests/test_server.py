@@ -579,3 +579,4 @@ def test_reranker_reorders_and_gets_shortlist(store_path, mock_server_embedder):
     assert reranker.seen_candidates == 3
     scores = [r["score"] for r in results]
     assert scores == sorted(scores, reverse=True)
+

@@ -714,6 +714,25 @@ def create_app(
     return app
 
 
+class _DropPollingAccessLines(logging.Filter):
+    """Hide the access-log lines of the endpoints that are polled, not asked.
+
+    The chat UI refreshes ``/stats`` every few seconds and ``serviette up``
+    probes ``/health`` while waiting for the server: logged, they fill an idle
+    terminal with one identical line per poll and bury the requests that
+    matter (``/rag``, ``/retrieve``). uvicorn logs every request as
+    ``'%s - "%s %s HTTP/%s" %d'`` with the path as the third argument."""
+
+    _POLLED = ("/api/v1/stats", "/health")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5:
+            path = str(args[2]).split("?", 1)[0]
+            return path not in self._POLLED
+        return True
+
+
 def run(config: ServietteConfig) -> None:
     """Start uvicorn with the configured host/port (used by the CLI)."""
 
@@ -734,5 +753,6 @@ def run(config: ServietteConfig) -> None:
     # the hub checks (sentence-transformers / huggingface_hub).
     for name in ("httpx", "httpcore", "sentence_transformers", "huggingface_hub"):
         logging.getLogger(name).setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").addFilter(_DropPollingAccessLines())
     app = create_app(config)
     uvicorn.run(app, host=config.server.host, port=config.server.port)

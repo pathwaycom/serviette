@@ -255,7 +255,7 @@ string, which would only surface later as a provider 401).
 | `server.host` / `server.port` | str / int | `127.0.0.1` / `8989` | server | Bind address. Loopback by default; set `0.0.0.0` explicitly to listen on all interfaces (containers, remote access) — see [Security](#security--exposing-the-server). |
 | `server.serve_frontend` | bool | `true` | server | Serve the chat UI on `/` from the same port (API stays under `/api/v1`). |
 | `server.cors_origins` | list[str] | `[]` (disabled) | server | Opt-in CORS allowlist for third-party browser frontends calling the API directly from another origin. serviette's own UIs never need it. Prefer exact origins over `*`. |
-| `up.index_wait_timeout` | float\|null | `120` | up | Seconds `serviette up` holds the server back waiting for the first indexed chunks. A folder whose documents all yield no text (scans without the `ocr` extra, audio without its API key, parser failures) never produces one, so after this long the server starts over the empty index with a warning; `null` waits forever. |
+| `up.index_wait_timeout` | float\|null | `120` | up | Seconds of indexer *inactivity* after which `serviette up` stops holding the server back waiting for the first indexed chunks. Counted from the indexer's last sign of work in its log (a document being parsed, input reaching the engine, embedding progress), so a few large PDFs that take minutes to parse do not trip it. A folder whose documents all yield no text (scans without the `ocr` extra, audio without its API key, parser failures) never produces a chunk and goes quiet right after parsing, so after this long the server starts over the empty index with a warning; `null` waits forever. |
 | `llm.type` | str | `openai` | server | LLM for `/rag` (omit to disable `/rag`). |
 | `llm.model` | str | `gpt-4o-mini` | server | Chat model. |
 | `llm.api_key` | str | — | server | API key (or `${ENV}`). |
@@ -273,6 +273,18 @@ credentials — install `serviette[local]`), `gemini` (`serviette[gemini]`),
 matching async client on the server side, so one `embedder` section serves both
 components; make sure the indexer and server use the **same** model so vectors
 are comparable.
+
+**Which local model.** The `sentence_transformer` default,
+`sentence-transformers/all-MiniLM-L6-v2`, is an **English-only** model: with
+French, German or Polish documents retrieval degrades to "the context does not
+contain the information" even though the files were indexed. For non-English
+or mixed corpora set `model: intfloat/multilingual-e5-small` (~100 languages,
+same size and speed) together with the prefixes it was trained with,
+`query_prefix: "query: "` and `document_prefix: "passage: "`; for the highest
+quality and long chunks, `BAAI/bge-m3` (1024-dim, ~2.3 GB, several times slower
+on CPU). `serviette wizard` asks this as its "Embedding model" step and writes
+the prefixes for you. Changing the model means re-indexing (the fingerprint
+check will say so).
 
 ### Sources
 

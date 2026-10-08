@@ -16,6 +16,7 @@ import argparse
 import contextlib
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -103,6 +104,21 @@ def _spawn_workers(workers: int, argv: list[str], first_port: int = 10000) -> in
     return run_forwarding_signals(command)
 
 
+class _DropIdleMonitoringLines(logging.Filter):
+    """Hide the engine's heartbeat lines that report no work.
+
+    ``pathway_engine.connectors.monitoring`` logs every output flush and
+    every input poll — about ten lines a minute on an idle index, all saying
+    "0 entries". The same lines with a non-zero count are the user's only
+    progress indicator ("source_0: 5 entries … sent to the engine", "Done
+    writing 5 entries"), so those stay."""
+
+    _IDLE = re.compile(r"Done writing 0 entries|: 0 entries \(")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not self._IDLE.search(record.getMessage())
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="serviette indexer")
     parser.add_argument("--config", required=True, help="Path to the YAML config file")
@@ -112,6 +128,15 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=args.log_level.upper())
+    if logging.getLogger().getEffectiveLevel() > logging.DEBUG:
+        # The engine reports every persisted snapshot chunk at INFO
+        # ("Persisting a chunk of 105 entries (2100 -> 551 bytes)") — a line
+        # every few seconds even when nothing changes, and nothing a user can
+        # act on. Keep it, and the idle heartbeats, for --log-level DEBUG only.
+        logging.getLogger("pathway_engine.persistence").setLevel(logging.WARNING)
+        logging.getLogger("pathway_engine.connectors.monitoring").addFilter(
+            _DropIdleMonitoringLines()
+        )
     config = load_indexer_config(args.config)
     # A mistyped folder must stop here with a plain message, not become an
     # empty index (the fs connector watches a missing path without complaint).

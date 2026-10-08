@@ -79,6 +79,14 @@ def _json_to_dict(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+def _human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} GB"  # pragma: no cover - loop always returns
+
+
 # ---------------------------------------------------------------------------
 # Parser dispatch (xpack parsers, called imperatively because only_metadata
 # means we hold paths, not bytes, in the graph)
@@ -556,7 +564,17 @@ def build_graph(
             name = str(meta.get("name") or os.path.basename(path))
             try:
                 contents, suffix = fetch_with_retries(fetcher, meta, fetch_retries)
-                return registry.parse(contents, suffix, name, path)
+                # One line before and one after: a large PDF can take
+                # minutes, during which the engine logs nothing — these lines
+                # are what tells the user (and ``serviette up``, which reads
+                # them to tell "working" from "stuck") that the indexer is busy.
+                logger.info("parsing %s (%s)", name or path, _human_size(len(contents)))
+                started = time.monotonic()
+                text = registry.parse(contents, suffix, name, path)
+                logger.info(
+                    "parsed %s: %d chars in %.1fs", name or path, len(text), time.monotonic() - started
+                )
+                return text
             except ParseError as exc:
                 # One bad object must never kill the pipeline: index it as
                 # empty and say so loudly, per object (not once per reason).

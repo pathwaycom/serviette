@@ -24,6 +24,7 @@ import httpx
 import pytest
 import yaml
 
+from serviette import wizard as wizard_module
 from serviette.wizard import ScriptedPrompter, Wizard, build_config, dump_yaml
 
 pytestmark = pytest.mark.slow
@@ -43,6 +44,9 @@ def _wait(predicate, timeout: float, message: str) -> None:
 
 def test_demo_path_smoke(tmp_path, tcp_port, monkeypatch):
     monkeypatch.chdir(tmp_path)  # wizard defaults (./embeddings.duckdb) land here
+    # The local embedder is swapped for mock below; the wizard's "package not
+    # installed" prompt would otherwise depend on what this venv has.
+    monkeypatch.setattr(wizard_module, "_installed", lambda module: True)
     docs = tmp_path / "docs"
     docs.mkdir()
     alpha = "cats purr and chase mice in the sunny yard"
@@ -55,7 +59,8 @@ def test_demo_path_smoke(tmp_path, tcp_port, monkeypatch):
             "1", str(docs),  # one filesystem source
             "6",            # done
             "1",            # vector db: duckdb (silent defaults)
-            "1",            # embedder: local (no further questions)
+            "1",            # embedder: local
+            "1",            # embedding model: default (swapped for mock below)
             "",             # enable /rag? -> No
             "TEST-KEY",     # license key
             "./config.yaml",
