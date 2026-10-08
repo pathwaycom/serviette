@@ -419,6 +419,7 @@ def _external_writer(path, hold_seconds: float):
     finally:
         proc.kill()
         proc.wait()
+        proc.stdout.close()
 
 
 def test_reader_waits_out_a_long_write_lock(store_path, mock_server_embedder):

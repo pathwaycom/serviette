@@ -182,8 +182,12 @@ def test_timed_refresh_catches_edits_the_count_misses(monkeypatch):
         assert acc.fetch_all_calls == 1  # within the TTL: no refresh yet
         now["t"] += 25
         during = await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
+        # Whether the task has already run by now depends on the asyncio
+        # scheduling of the Python version (it has on 3.13+ with this instant
+        # fake); what matters is that it was scheduled and that ``during``
+        # was answered from the old index.
         refresh = acc._bm25_refresh
-        assert refresh is not None and not refresh.done()
+        assert refresh is not None
         await refresh
         fresh = await acc.retrieve_ex([0.0, 0.0], 2, query_text="129 EUR")
         await acc.close()
