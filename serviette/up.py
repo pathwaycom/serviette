@@ -476,6 +476,11 @@ def run(config: ServietteConfig, config_path: str, *, verbose: bool = False) -> 
 
     config.for_indexer()
     config.for_server()
+    # The readiness probe goes through httpx, which logs every request at
+    # INFO — that would print one line per health poll (here rather than in
+    # ``main`` so that ``serviette demo``, which calls ``run`` directly, is
+    # covered too).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     # Fail fast on a mistyped source folder: otherwise the indexer watches
     # nothing, the "empty folder" path below starts the server, and the user
     # only sees "no relevant context" answers.
@@ -589,7 +594,4 @@ def main(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    # The readiness probe goes through httpx, which logs every request at
-    # INFO — that would print one line per health poll.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
     sys.exit(run(load_config(args.config), args.config, verbose=args.verbose))

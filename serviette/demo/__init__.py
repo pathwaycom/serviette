@@ -37,8 +37,8 @@ _SCRIPT = """
  serviette demo — Lumina Coffee Systems
  Chat UI:  http://localhost:{port}
            (opens after the first indexing pass — wait for the
-            "server is ready — open http://..." line below; the first
-            run also downloads the embedding model, ~1-2 min)
+            "Ready — open http://..." line below; the first run
+            also downloads the embedding model, ~1-2 min)
 
  Your documents live in:
    {docs_dir}
@@ -192,10 +192,16 @@ def prepare_demo_dir(
             "--embedder openai (uses your OPENAI_API_KEY; costs money)."
         )
     elif embedder == "sentence_transformer":
-        logger.info(
-            "Using local sentence-transformers embeddings; /rag will quote "
-            "retrieved snippets (set OPENAI_API_KEY for generated answers)."
-        )
+        if os.environ.get("OPENAI_API_KEY"):
+            logger.info(
+                "Using local sentence-transformers embeddings; answers are "
+                "generated with OpenAI (OPENAI_API_KEY is set)."
+            )
+        else:
+            logger.info(
+                "Using local sentence-transformers embeddings; /rag will quote "
+                "retrieved snippets (set OPENAI_API_KEY for generated answers)."
+            )
     elif embedder == "openai":
         logger.info(
             "Using OpenAI embeddings for indexing: fast to start, but every "

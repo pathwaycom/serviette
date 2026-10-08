@@ -601,13 +601,18 @@ loopback-only by construction and cannot be exposed directly.
 
 ## Appendix: regenerating the demo GIF
 
-The README demo GIF is **emulated** (rendered with Pillow — no terminal
-recorder or browser needed), so it regenerates deterministically anywhere:
+The README demo GIF is rendered with Pillow (no terminal recorder or browser
+needed), so it regenerates deterministically anywhere:
 
 ```bash
 pip install pillow
 python docs/generate_demos.py     # -> docs/assets/demo.gif
 ```
 
-The scene (the Team-tier question, the `sed` price edit, the second answer)
-is parameterized by constants at the top of the script.
+The frames show real output: the terminal lines are those of a recorded
+`serviette demo` run (heartbeats thinned), the answers are what the model
+produced on the bundled corpus before and after the `sed` edit, and the header
+statistics are the real `/api/v1/stats` values. They live as constants in the
+script (`SCRIPT_UP`, `SCRIPT_EDIT`, `ANSWER_*`, `STATS_*`) — when the output
+of `demo`/`up` or the chat UI changes, re-record and update them rather than
+inventing lines.

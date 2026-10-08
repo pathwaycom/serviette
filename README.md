@@ -1,13 +1,20 @@
 # serviette
 
-**A universal, no-code, always up-to-date RAG server for any vector database
-— powered by the [Pathway](https://pathway.com) Live Data Framework.**
+<p>
+  <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/v/serviette" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/serviette/"><img src="https://img.shields.io/pypi/pyversions/serviette" alt="Python versions"></a>
+  <a href="https://github.com/pathwaycom/serviette/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pathwaycom/serviette" alt="License: MIT"></a>
+  <a href="https://github.com/pathwaycom/serviette/actions/workflows/ci.yml"><img src="https://github.com/pathwaycom/serviette/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
 
-Set up Retrieval-Augmented Generation over your own documents without writing
-any code. Point serviette at a folder, pick a vector database and an embedder in
-a YAML file, and run a few commands. From then on, any change you make to the
-documents — an edit, a new file, a deletion — is reflected in answers within
-seconds.
+**A no-code, always up-to-date RAG server for any vector database — built on
+the [Pathway Live Data Framework](https://github.com/pathwaycom/pathway).**
+
+Point serviette at a folder of documents, pick a vector database and an
+embedder in one YAML file, and run two commands: you get a chat and a REST API
+that answer from those documents and cite their sources. From then on, any
+change to the documents — an edit, a new file, a deletion — is reflected in
+the answers within seconds.
 
 serviette runs on Pathway, which needs a **free license key** — one click at
 <https://pathway.com/framework/get-license> (GitHub or LinkedIn sign-in). Every
@@ -31,9 +38,56 @@ it. Edit or drop files into that folder while it runs — the answers
 follow within seconds.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/demo.gif" alt="serviette: CLI walkthrough then the web chat UI" width="100%">
+  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/demo.gif" alt="serviette demo: the terminal output up to the Ready line, the chat answering a question, a one-line edit of a document in a second terminal, and the same question answered with the new value" width="100%">
 </p>
-<p align="center"><em>From zero to a live RAG stack in two commands — then edit a document and watch the answer change.</em></p>
+<p align="center"><em>One command to a live RAG stack — then edit a document and watch the answer change.</em></p>
+
+## Who is it for
+
+**What you get.** A question-answering assistant over your organisation's
+documents, with sources cited and answers that follow the documents: an edit,
+a new file or a deletion is reflected within seconds, with no re-upload or
+re-indexing step for anyone to run or forget.
+
+**What it costs to run.** Two processes (an indexer and a server) and one YAML
+file. Embeddings can be computed locally for free; the Pathway license is
+free; the only metered component is the optional model API that writes the
+answer text, billed per question rather than per document.
+
+**Where your data goes.** Nowhere by default. With the default local
+embedder, documents, their embeddings and the index stay on the machine or in
+the database you choose; the only thing that leaves is the handful of passages
+retrieved for a question, sent to the model API that writes the answer — and
+only if you configure one. (Choosing an API embedder instead sends the
+document text through that API as well.)
+
+**How mature it is.** serviette is a thin layer over the
+[Pathway Live Data Framework](https://github.com/pathwaycom/pathway) — the
+open-source engine that does the watching, parsing, embedding and writing: in
+development since 2022, 60 000+ GitHub stars, in production use at
+organisations such as
+[DB Schenker](https://pathway.com/success-stories/db-schenker),
+[Intel](https://pathway.com/framework/blog/intel-summit),
+[NATO](https://pathway.com/blog/jsec-pathway-ai-collaboration-steadfast-foxtrot-2024),
+[La Poste](https://pathway.com/success-stories/la-poste),
+[Transdev](https://pathway.com/success-stories/transdev) and
+[CMA CGM](https://pathway.com/success-stories/cma-cgm).
+serviette's own numbers are measured, not estimated: indexing
+up to 50 GB of text (26 million pages, 17 million files) in constant memory,
+retrieval accuracy on a public benchmark (FRAMES), eight vector databases
+under integration tests against real instances — all reproducible from this
+repository.
+
+**Where it stands today.** It answers one question at a time, from the
+current state of the documents. Conversation memory, user accounts and a
+hosted offering are not built in yet — and each is a short step from what is
+here. If your use case needs one of them, or something else, contact us for a
+tailor-made solution:
+[open an issue](https://github.com/pathwaycom/serviette/issues), write on
+[Discord](https://discord.gg/pathway), or email
+[contact@pathway.com](mailto:contact@pathway.com).
+
+The rest of this README is for the person setting it up.
 
 To run it over your own documents, generate a config and start the stack:
 
@@ -178,8 +232,9 @@ that remains is the file-watch index above, i.e. the corpus in fewer files
 would cost less. Indexing time scales linearly with bytes throughout.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/bench-memory.png" alt="Left: indexer PSS over time for corpora from 100 MB to 50 GB; every curve plateaus between 7 and 16 GB. Right: connector-worker extra memory across six corpus sizes follows ~318 bytes per watched file" width="100%">
+  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/bench-memory.png" alt="Left: indexer PSS over time for corpora from 100 MB to 50 GB, from the run before the allocator tuning; every curve reaches its plateau in the first minutes and holds it for hours. Right: connector-worker extra memory across six corpus sizes follows ~318 bytes per watched file" width="100%">
 </p>
+<p align="center"><em>Curves from the run <strong>before</strong> the allocator tuning (peaks 6.6–16.4 GB); the table above has the final numbers from the tuned rerun (6.6–13.1 GB). The shape is the point: each curve reaches its plateau in the first minutes and holds it for the rest of the run — 5.5 hours for 50 GB.</em></p>
 
 The peak itself is dominated by the embedding stack, not the engine — a
 Pathway worker process is ~200 MB; the rest is the price of running
@@ -187,8 +242,9 @@ embeddings locally (8 × PyTorch runtime + model), i.e. of paying no
 per-token API fees. Fewer workers or an API embedder shrink it accordingly.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/bench-memory-breakdown.png" alt="Breakdown of the 8.8 GB peak on the 10 GB corpus: three quarters is the local PyTorch embedding stack across 8 workers; file-watch metadata is about 1.1 GB; supervisors and shared code make up the rest" width="85%">
+  <img src="https://raw.githubusercontent.com/pathwaycom/serviette/main/docs/assets/bench-memory-breakdown.png" alt="Breakdown of the 10 GB corpus peak as measured in the run before the allocator tuning (8.8 GB): three quarters is the local PyTorch embedding stack across 8 workers; file-watch metadata is about 1.1 GB; supervisors and shared code make up the rest" width="85%">
 </p>
+<p align="center"><em>Same earlier run (8.8 GB peak on the 10 GB corpus; 7.7 GB after tuning). The proportions are what matters here: the embedding stack dominates, the engine and the file-watch index are small.</em></p>
 
 Memory is measured as PSS (proportional set size) summed over the container:
 shared pages — e.g. the PyTorch libraries mapped by every worker — are

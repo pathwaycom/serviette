@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Generate the README demo GIFs (terminal walkthrough + chat UI).
+"""Generate the README demo GIF (terminal walkthrough + chat UI).
 
-These are *emulated* demos rendered with Pillow — no terminal recorder or
-browser needed — so they regenerate deterministically anywhere:
+The frames are rendered with Pillow — no terminal recorder or browser needed —
+so they regenerate deterministically anywhere:
 
     python docs/generate_demos.py
 
 Output:
-    docs/assets/demo.gif   the four `serviette` commands + output, then the chat UI
-                           answering a question (two scenes, one GIF)
+    docs/assets/demo.gif   `serviette demo` with its real output, the chat UI
+                           answering a question, a live edit of a document in a
+                           second terminal, and the same question answered anew
+
+What is shown is what the programs print and answer. The terminal lines are
+taken verbatim from a recorded `serviette demo` run (only the 5-second
+heartbeats are thinned out), the chat answers are what gpt-4o-mini produced on
+the bundled corpus before and after the edit, and the header statistics are the
+real `/api/v1/stats` values. When the output of `demo`/`up` or the UI changes,
+update the scripts below rather than inventing lines.
 
 Requires Pillow (``pip install pillow``).
 """
@@ -79,46 +87,116 @@ T_CMD = (236, 239, 244)
 T_OUT = (148, 158, 170)
 T_ACCENT = (129, 140, 248)
 T_PAD = 24
-T_LINE_H = 30
+T_LINE_H = 26
+T_FONT = 17
+T_FIRST_Y = 56
 
+# Verbatim output of `serviette demo` (local embeddings, OPENAI_API_KEY set),
+# thinned: the heartbeat repeats every 5 s, three of them are kept.
+_INFO = "INFO "
 SCRIPT_UP = [
-    ("cmd", "serviette wizard"),
-    ("out", "  ? Where are your documents?   › ./docs", T_OUT),
-    ("out", "  ? Vector database             › DuckDB (embedded, zero setup)", T_OUT),
-    ("out", "  ? Embeddings                  › local · no API key needed", T_OUT),
-    ("out", "  ✓ Wrote config.yaml", T_OUT),
-    ("gap", ""),
-    ("cmd", "serviette up --config config.yaml"),
-    ("out", "  [indexer] watching ./docs  (fs · streaming)", T_OUT),
-    ("out", "  [indexer] parsed 128 docs · embedded 1,544 chunks → duckdb", T_ACCENT),
-    ("out", "  [server]  chat UI + API on http://localhost:8989", T_ACCENT),
+    ("cmd", "serviette demo"),
+    ("out", _INFO + "Using local sentence-transformers embeddings; answers are "
+            "generated with OpenAI (OPENAI_API_KEY is set).", T_OUT),
+    ("out", "", T_OUT),
+    ("out", "─" * 72, T_OUT),
+    ("out", " serviette demo — Lumina Coffee Systems", T_CMD),
+    ("out", " Chat UI:  http://localhost:8989", T_CMD),
+    ("out", "           (opens after the first indexing pass — wait for the", T_OUT),
+    ("out", '            "Ready — open http://..." line below; the first run', T_OUT),
+    ("out", "            also downloads the embedding model, ~1-2 min)", T_OUT),
+    ("out", "", T_OUT),
+    ("out", " Your documents live in:", T_OUT),
+    ("out", "   /home/you/serviette-demo/docs", T_CMD),
+    ("out", " Anything you do there — edit a file, drop in new documents (PDF, DOCX,", T_OUT),
+    ("out", " scans, …), delete one — is reflected in the answers within seconds.", T_OUT),
+    ("out", "", T_OUT),
+    ("out", " A scripted moment to try first:", T_OUT),
+    ("out", "   1. Ask in the chat: How much does the Team tier cost?   (→ 129 EUR)", T_OUT),
+    ("out", "   2. Open /home/you/serviette-demo/docs/pricing.md and change 129 EUR → 199 EUR", T_OUT),
+    ("out", "   3. Ask again — the answer follows the file", T_OUT),
+    ("out", "      (watch the “indexed … ago” counter in the header)", T_OUT),
+    ("out", "", T_OUT),
+    ("out", " Ctrl-C stops everything.", T_OUT),
+    ("out", "─" * 72, T_OUT),
+    ("out", "", T_OUT),
+    ("out", _INFO + "up: indexer started (pid 1986416)", T_OUT),
+    ("out", _INFO + "up: showing progress, warnings and errors only — run with --verbose "
+            "for the full indexer and server log", T_OUT),
+    ("out", _INFO + "up: indexing in progress — the chat/API server starts once the first "
+            "documents are ready (0s elapsed)", T_OUT),
+    ("out", _INFO + "up: indexing in progress — the chat/API server starts once the first "
+            "documents are ready (16s elapsed)", T_OUT),
+    ("out", _INFO + "up: indexing in progress — the chat/API server starts once the first "
+            "documents are ready (32s elapsed)", T_OUT),
+    ("out", _INFO + "up: index is ready — starting the server (pid 2019552)", T_OUT),
+    ("out", _INFO + "up: server starting — loading the query embedder; the URL appears once "
+            "it answers (1s elapsed)", T_OUT),
+    ("out", _INFO + "up: server starting — loading the query embedder; the URL appears once "
+            "it answers (11s elapsed)", T_OUT),
+    ("out", _INFO, T_OUT),
+    ("out", "  Ready — open http://localhost:8989", T_ACCENT),
+    ("out", "  (Ctrl-C stops the indexer and the server)", T_OUT),
 ]
 
+# `demo` keeps the first terminal; the edit happens in a second one. `sed`
+# prints nothing, and in quiet mode neither does `up` — the change shows up
+# in the chat header ("indexed 3s ago") and in the answer.
 SCRIPT_EDIT = [
-    ("gap", ""),
-    ("out", "  # change the price — the index follows in seconds:", T_OUT),
-    ("cmd", "sed -i 's/129 EUR/199 EUR/' docs/pricing.md"),
-    ("out", "  [indexer] docs/pricing.md changed · re-embedded 3 chunks", T_ACCENT),
+    ("cmd", "sed -i 's/129 EUR/199 EUR/' serviette-demo/docs/pricing.md"),
 ]
 
 
-def _draw_terminal(lines, typing) -> Image.Image:
+def _wrap_mono(text: str, fnt: ImageFont.FreeTypeFont, max_w: float) -> list[str]:
+    """Wrap one printed line the way a terminal of this width would."""
+
+    if fnt.getlength(text) <= max_w:
+        return [text]
+    words, lines, cur = text.split(" "), [], ""
+    for w in words:
+        trial = f"{cur} {w}" if cur else w
+        if fnt.getlength(trial) <= max_w:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _draw_terminal(lines, typing, title="serviette — terminal") -> Image.Image:
     img = Image.new("RGB", (T_W, T_H), T_BG)
     d = ImageDraw.Draw(img)
-    mono = font("mono", 19)
-    mono_b = font("mono_bold", 19)
+    mono = font("mono", T_FONT)
+    mono_b = font("mono_bold", T_FONT)
     # title bar
     d.rounded_rectangle([0, 0, T_W, 40], radius=0, fill=T_BAR)
     for i, c in enumerate([(255, 95, 86), (255, 189, 46), (39, 201, 63)]):
         d.ellipse([20 + i * 22, 14, 32 + i * 22, 26], fill=c)
-    d.text((T_W // 2, 20), "serviette — terminal", font=font("sans", 14), fill=T_OUT, anchor="mm")
+    d.text((T_W // 2, 20), title, font=font("sans", 14), fill=T_OUT, anchor="mm")
 
-    y = 56
+    # Lay out every printed line (wrapped like a terminal would), then show
+    # the tail that fits — older lines scroll off the top, as they really do.
+    max_w = T_W - 2 * T_PAD
+    rows: list[tuple[str, str, tuple]] = []
     for kind, text, color in lines:
+        if kind == "cmd":
+            rows.append(("cmd", text, T_CMD))
+        else:
+            for piece in _wrap_mono(text, mono, max_w):
+                rows.append(("out", piece, color))
+    prompt_rows = 1 if typing is not None else 0
+    capacity = (T_H - T_FIRST_Y - 8) // T_LINE_H - prompt_rows
+    rows = rows[-capacity:] if capacity > 0 else []
+
+    y = T_FIRST_Y
+    for kind, text, color in rows:
         if kind == "cmd":
             d.text((T_PAD, y), "$", font=mono_b, fill=T_PROMPT)
             d.text((T_PAD + 18, y), " " + text, font=mono_b, fill=T_CMD)
-        elif kind == "out":
+        else:
             d.text((T_PAD, y), text, font=mono, fill=color)
         y += T_LINE_H
 
@@ -126,11 +204,13 @@ def _draw_terminal(lines, typing) -> Image.Image:
         d.text((T_PAD, y), "$", font=mono_b, fill=T_PROMPT)
         d.text((T_PAD + 18, y), " " + typing, font=mono_b, fill=T_CMD)
         w = mono_b.getlength(" " + typing)
-        d.rectangle([T_PAD + 18 + w + 2, y + 2, T_PAD + 18 + w + 12, y + 22], fill=T_CMD)
+        d.rectangle([T_PAD + 18 + w + 2, y + 2, T_PAD + 18 + w + 12, y + 20], fill=T_CMD)
     return img
 
 
-def build_terminal(script, preprinted=()) -> tuple[list[Image.Image], list[int], list[tuple]]:
+def build_terminal(
+    script, preprinted=(), title="serviette — terminal", hold=1500
+) -> tuple[list[Image.Image], list[int], list[tuple]]:
     frames: list[Image.Image] = []
     durs: list[int] = []
     printed: list[tuple] = list(preprinted)
@@ -143,22 +223,20 @@ def build_terminal(script, preprinted=()) -> tuple[list[Image.Image], list[int],
             for i, ch in enumerate(text):
                 cur += ch
                 if i % 3 == 0 or i == len(text) - 1:
-                    frames.append(_draw_terminal(printed, cur))
+                    frames.append(_draw_terminal(printed, cur, title))
                     durs.append(55)
             printed.append(("cmd", text, T_CMD))
-            frames.append(_draw_terminal(printed, None))
+            frames.append(_draw_terminal(printed, None, title))
             durs.append(350)
         elif kind == "out":
             printed.append(("out", item[1], item[2]))
-            frames.append(_draw_terminal(printed, None))
-            durs.append(550)
-        elif kind == "gap":
-            printed.append(("out", "", T_OUT))
-            frames.append(_draw_terminal(printed, None))
-            durs.append(150)
+            frames.append(_draw_terminal(printed, None, title))
+            # The banner is printed at once; the `up:` progress lines arrive
+            # over time, so they get a longer beat each.
+            durs.append(700 if item[1].startswith(_INFO) or item[1].startswith("  ") else 120)
 
-    frames.append(_draw_terminal(printed, None))
-    durs.append(1500)  # hold before switching to the UI scene
+    frames.append(_draw_terminal(printed, None, title))
+    durs.append(hold)  # hold before switching to the UI scene
     return frames, durs, printed
 
 
@@ -176,15 +254,15 @@ F_USER_BG = (31, 32, 35)
 F_ASSIST_BG = (244, 244, 246)
 F_SOFTBG = (247, 247, 248)
 
+# What gpt-4o-mini answered on the bundled corpus, before and after the edit
+# (recorded with `serviette demo`, local embeddings, k=5).
 QUESTION = "How much does the Team tier cost?"
-ANSWER_BEFORE = (
-    "The Team tier costs 129 EUR per seat per month, billed annually. "
-    "It includes fleet monitoring for up to 50 machines."
-)
-ANSWER_AFTER = (
-    "The Team tier costs 199 EUR per seat per month, billed annually. "
-    "It includes fleet monitoring for up to 50 machines."
-)
+ANSWER_BEFORE = "The Team tier costs 129 EUR/month."
+ANSWER_AFTER = "The Team tier costs 199 EUR/month."
+# The header's live statistics line, as /api/v1/stats reported them.
+STATS_BEFORE = "duckdb · 5 chunks · 5 docs · indexed 2m ago"
+STATS_AFTER = "duckdb · 5 chunks · 5 docs · indexed 3s ago"
+SOURCES_LABEL = "5 sources"
 
 
 def _wrap(draw, text, fnt, max_w):
@@ -216,14 +294,23 @@ def _draw_frontend(exchanges, composer_text, typing, indexed_note) -> Image.Imag
     d.line([0, 53, F_W, 53], fill=F_BORDER)
     d.rounded_rectangle([20, 16, 46, 42], radius=8, fill=F_ACCENT)
     d.text((56, 29), "serviette", font=sans_b, fill=F_TEXT, anchor="lm")
-    d.text((F_W - 20, 29), f"API · http://localhost:8989 · {indexed_note}",
-           font=small, fill=F_SOFT, anchor="rm")
+    # right side: live statistics, then the "Documents" and settings buttons
+    x = F_W - 20
+    d.rounded_rectangle([x - 30, 15, x, 43], radius=8, outline=F_BORDER, fill=F_SOFTBG)
+    d.text((x - 15, 29), "⚙", font=font("sans", 14), fill=F_SOFT, anchor="mm")
+    x -= 38
+    d.rounded_rectangle([x - 86, 15, x, 43], radius=8, outline=F_BORDER, fill=F_SOFTBG)
+    d.text((x - 43, 29), "Documents", font=small, fill=F_SOFT, anchor="mm")
+    x -= 98
+    d.text((x, 29), indexed_note, font=small, fill=F_SOFT, anchor="rm")
 
     y = 78
     if not exchanges and not composer_text:
-        d.text((F_W // 2, 210), "Ask anything about your documents",
+        d.text((F_W // 2, 200), "Ask anything about your documents",
                font=font("sans_bold", 22), fill=F_TEXT, anchor="mm")
-        d.text((F_W // 2, 242), "Answers are grounded in your indexed knowledge base.",
+        d.text((F_W // 2, 232), "Answers are grounded in your indexed knowledge base.",
+               font=sans, fill=F_SOFT, anchor="mm")
+        d.text((F_W // 2, 256), "Each question is answered on its own, without memory of earlier ones.",
                font=sans, fill=F_SOFT, anchor="mm")
 
     for i, (question, answer_chars, show_sources) in enumerate(exchanges):
@@ -261,9 +348,10 @@ def _draw_frontend(exchanges, composer_text, typing, indexed_note) -> Image.Imag
                 d.text((bx + 16, y + 12 + j * 24), ln, font=sans, fill=F_TEXT)
             y += bh + 8
             if show_sources:
-                d.rounded_rectangle([bx, y, bx + 190, y + 28], radius=10,
+                # The UI's collapsed <details> block listing the passages used.
+                d.rounded_rectangle([bx, y, bx + 130, y + 28], radius=10,
                                     fill=F_SOFTBG, outline=F_BORDER)
-                d.text((bx + 12, y + 14), "▸  docs/pricing.md", font=small,
+                d.text((bx + 12, y + 14), "▸  " + SOURCES_LABEL, font=small,
                        fill=F_SOFT, anchor="lm")
                 y += 38
         y += 10
@@ -280,6 +368,9 @@ def _draw_frontend(exchanges, composer_text, typing, indexed_note) -> Image.Imag
     d.line([cx - 6, cyy + 5, cx + 6, cyy - 6], fill=(255, 255, 255), width=2)
     d.line([cx + 6, cyy - 6, cx + 1, cyy - 6], fill=(255, 255, 255), width=2)
     d.line([cx + 6, cyy - 6, cx + 6, cyy - 1], fill=(255, 255, 255), width=2)
+    d.text((F_W // 2, F_H - 12),
+           "Enter to send · Shift+Enter for a new line · Each question is answered on its own",
+           font=font("sans", 11), fill=F_SOFT, anchor="mm")
     return img
 
 
@@ -331,13 +422,16 @@ def _onto_canvas(img: Image.Image, bg: tuple[int, int, int]) -> Image.Image:
 
 
 def render_combined_gif() -> None:
-    # Beat 1: wizard + up. Beat 2: ask about the Team tier -> 129 EUR.
-    # Beat 3: sed edits pricing.md. Beat 4: same question -> 199 EUR.
-    t1_frames, t1_durs, printed = build_terminal(SCRIPT_UP)
-    c1_frames, c1_durs = build_chat([], ANSWER_BEFORE, "indexed 41 min ago")
-    t2_frames, t2_durs, _ = build_terminal(SCRIPT_EDIT, preprinted=printed)
+    # Beat 1: `serviette demo` up to "Ready — open". Beat 2: ask about the
+    # Team tier -> 129 EUR. Beat 3: sed edits pricing.md in a second terminal.
+    # Beat 4: the same question -> 199 EUR, header says "indexed 3s ago".
+    t1_frames, t1_durs, _ = build_terminal(SCRIPT_UP)
+    c1_frames, c1_durs = build_chat([], ANSWER_BEFORE, STATS_BEFORE)
+    t2_frames, t2_durs, _ = build_terminal(
+        SCRIPT_EDIT, title="serviette — second terminal", hold=1200
+    )
     c2_frames, c2_durs = build_chat(
-        [(QUESTION, len(ANSWER_BEFORE))], ANSWER_AFTER, "indexed 2 s ago"
+        [(QUESTION, len(ANSWER_BEFORE))], ANSWER_AFTER, STATS_AFTER
     )
 
     frames = [_onto_canvas(f, T_BG) for f in t1_frames]
