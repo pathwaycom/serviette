@@ -60,7 +60,9 @@ _MOCK_NOTICE = """
     Neither the local embedder is installed nor an API embedder chosen,
     so matching works on token overlap only{key_hint}.
     For a real demo, either:
-      pip install "serviette[local]"      # free local embeddings (~4.5 GB)
+      pip install "serviette[local]" --extra-index-url https://download.pytorch.org/whl/cpu
+                                          # free local embeddings (CPU PyTorch,
+                                          # ~0.8 GB; ~5 GB without the flag)
       serviette demo --embedder openai    # nothing to install; indexing is
                                           # billed to OPENAI_API_KEY
 """
@@ -188,8 +190,9 @@ def prepare_demo_dir(
         logger.warning(
             "sentence-transformers is not installed: using the mock embedder "
             "(retrieval quality is NOT representative). For a real demo "
-            'install "serviette[local]" (free local embeddings) or run with '
-            "--embedder openai (uses your OPENAI_API_KEY; costs money)."
+            'install "serviette[local]" --extra-index-url '
+            "https://download.pytorch.org/whl/cpu (free local embeddings) or "
+            "run with --embedder openai (uses your OPENAI_API_KEY; costs money)."
         )
     elif embedder == "sentence_transformer":
         if os.environ.get("OPENAI_API_KEY"):

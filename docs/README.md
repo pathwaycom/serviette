@@ -27,13 +27,18 @@ database, so you can scale them independently.
 serviette requires **Python ≥ 3.10** (the minimum supported by Pathway).
 
 ```bash
-pip install "serviette[local]"
+pip install "serviette[local]" --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 The `local` extra brings sentence-transformers — the free, credential-free
-embedder that `serviette wizard` selects by default. It pulls the
-PyTorch stack (~4.5 GB); if you intend to embed with OpenAI instead, a
-plain `pip install serviette` is enough (pick `openai` in the wizard).
+embedder that `serviette wizard` selects by default. It pulls the PyTorch
+stack, and the `--extra-index-url` flag makes pip take PyTorch's CPU build
+(~0.8 GB). Without it, PyTorch's default Linux wheel is installed, which
+carries the CUDA libraries (~5 GB) whether or not the machine has an NVIDIA
+GPU — leave the flag out only if you want to embed on such a GPU. (With
+`uv`, add `--index-strategy unsafe-best-match` as well.) If you intend to
+embed with OpenAI instead, a plain `pip install serviette` is enough (pick
+`openai` in the wizard).
 From a checkout, `pip install -e ".[dev,local]"` — see the README's
 [Development](../README.md#development) section for the full walkthrough.
 OpenAI support (the default `/rag` LLM and the OpenAI embedder) is built

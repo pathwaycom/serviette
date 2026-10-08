@@ -92,8 +92,11 @@ The rest of this README is for the person setting it up.
 To run it over your own documents, generate a config and start the stack:
 
 ```bash
-pip install "serviette[local]"   # [local] = free local embeddings, the wizard's default (~4.5 GB PyTorch stack);
-                                 # plain `pip install serviette` if you will embed with OpenAI instead
+pip install "serviette[local]" --extra-index-url https://download.pytorch.org/whl/cpu
+    # [local] = free local embeddings, the wizard's default. It brings PyTorch; the
+    # --extra-index-url picks its CPU build (~0.8 GB) instead of the default one
+    # with CUDA libraries (~5 GB) — drop the flag only if you will embed on an
+    # NVIDIA GPU. Plain `pip install serviette` if you will embed with OpenAI instead.
 export PATHWAY_LICENSE_KEY=...   # the free Pathway license (see above); the wizard picks it up from here
 export OPENAI_API_KEY=sk-...     # powers generated answers; omit to run keyless (answers quote the retrieved snippets)
 
@@ -461,9 +464,12 @@ Notes:
   within seconds.
 - The demo indexes with one of two embedders — pick your trade-off:
   - **default, free & local** — needs `serviette[local]`, which pulls the
-    PyTorch stack (**~4.5 GB**): on a typical laptop connection the install
-    itself is the slow part, so the first run takes a while. Free at any
-    corpus size afterwards.
+    PyTorch stack. Install it with
+    `--extra-index-url https://download.pytorch.org/whl/cpu` to get the CPU
+    build (~0.8 GB); without the flag pip takes PyTorch's default Linux
+    wheel, which ships CUDA libraries whether or not you have an NVIDIA GPU
+    (**~5 GB**, and the install is the slow part of the first run). Free at
+    any corpus size afterwards.
   - **`--embedder openai`** — nothing to install, starts immediately, but
     every indexed token is billed to your `OPENAI_API_KEY`. Fine for the toy
     corpus and small folders; for a large collection, sit out the
