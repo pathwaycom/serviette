@@ -79,7 +79,11 @@ pyfilesystem = ["fs>=2.4", "setuptools<81"]
 docling = ["pathway[xpack-llm-docs]"]  # layout-aware PDF, DOCX via unstructured
 # paddlepaddle pinned below 3.3: its PIR+oneDNN executor crashes on some
 # CPUs (ConvertPirAttribute2RuntimeAttribute); 3.0.x is solid.
-ocr = ["paddleocr>=2.7", "paddlepaddle>=2.6,<3.3", "paddlex[ocr]>=3.0"]
+# pdf2image: the xpack's PaddleOCRParser imports it unconditionally (it
+# renders PDF/PPTX input to page images); without it the parser is
+# "unavailable" and every scan is skipped. Pure Python on top of Pillow;
+# the poppler binaries it drives are only needed for PDF input.
+ocr = ["paddleocr>=2.7", "paddlepaddle>=2.6,<3.3", "paddlex[ocr]>=3.0", "pdf2image>=1.17"]
 # One extra per vector-DB backend — install only what you use.
 pgvector = ["asyncpg>=0.29"]
 milvus = ["pymilvus>=2.4"]
