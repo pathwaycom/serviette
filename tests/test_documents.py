@@ -351,6 +351,40 @@ def _windows(text: str, size: int) -> list[dict]:
     ]
 
 
+@pytest.mark.parametrize("old,new", [
+    ("Interest rate is 1.5 percent.", "Interest rate is 15 percent."),
+    ("Interest rate is 1,5 percent.", "Interest rate is 15 percent."),
+    ("Balance adjustment is -100 dollars.", "Balance adjustment is 100 dollars."),
+    ("Balance adjustment is +100 dollars.", "Balance adjustment is -100 dollars."),
+    ("The agreed annual interest rate is 15%.", "The agreed annual interest rate is 15."),
+    ("-100 dollars must be reimbursed.", "100 dollars must be reimbursed."),
+    ("1100 dollars must be reimbursed.", "100 dollars must be reimbursed."),
+])
+def test_version_diff_preserves_numeric_meaning(old, new):
+    shared = "The agreement covers all registered customers.\nService hours are unchanged.\n"
+    entries = [{"id": name, "metadata": {}, "chunks": 1}
+               for name in ("old.txt", "new.txt")]
+    chunks = [[{"text": shared + text, "embedding": fake_embedding("q")}]
+              for text in (old, new)]
+    built = docmode.compare_context(entries, chunks, fake_embedding("q"), budget=24000)
+    assert any(old in part and new in part for part in built.context[1:])
+    assert "1 passages changed" in built.notice
+
+
+@pytest.mark.parametrize("old,new", [
+    ("Balance is -100 dollars.", "Balance is − 100 dollars."),
+    ("Balance is -100 dollars.", "Balance is –100 dollars."),
+    ("Interest is 15%.", "Interest is 15 %."),
+    ("The classification is unchanged.", "The classi\u00adfication  is unchanged!"),
+])
+def test_numeric_normalization_still_ignores_extraction_noise(old, new):
+    assert docmode._squash(old) == docmode._squash(new)
+
+
+def test_numeric_separator_conventions_are_not_assumed_equivalent():
+    assert docmode._squash("Amount: 1,500") != docmode._squash("Amount: 1.500")
+
+
 def test_versions_are_recognized_across_shifted_chunks_and_extraction_noise():
     """Real versions never share whole chunks: an insertion shifts every
     later window, and two PDFs of one text extract with different spacing,

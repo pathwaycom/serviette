@@ -642,12 +642,25 @@ def single_document_context(
 
 def _squash(text: str) -> str:
     """``text`` reduced to what must match for two extractions of the same
-    passage to be equal: letters and digits only, one case, no diacritics.
-    PDF text extraction varies between two files of one document in exactly
-    the rest — spacing, soft hyphens, the kind of apostrophe or dash."""
+    passage to be equal: one case, no diacritics or formatting noise.
+
+    Numeric punctuation carries meaning: 1.5 is not 15, and -100 is not
+    100. Keep decimal/grouping separators as written (their interpretation
+    depends on locale), unary signs and percent units. Other punctuation,
+    including PDF soft hyphens, is still ignored.
+    """
 
     decomposed = unicodedata.normalize("NFKD", text)
-    return "".join(ch for ch in decomposed if ch.isalnum()).casefold()
+    numeric_marks: dict[int, str] = {}
+    for match in re.finditer(r"(?<!\w)[+\-\u2212\u2010\u2011\u2012\u2013](?=\s*\d)", decomposed):
+        numeric_marks[match.start()] = "+" if match.group() == "+" else "-"
+    for match in re.finditer(r"(?<=\d)[.,](?=\d)|(?<=\d)\s*[%‰]", decomposed):
+        # The unit match may include spaces introduced by PDF extraction.
+        numeric_marks[match.end() - 1] = match.group()[-1]
+    return "".join(
+        ch if ch.isalnum() else numeric_marks.get(i, "")
+        for i, ch in enumerate(decomposed)
+    ).casefold()
 
 
 _DIGITS = re.compile(r"\d+")
@@ -721,6 +734,26 @@ class _Lines:
         """Runs of consecutive lines of this document that the other does
         not contain, as ``(text, chunk index)``."""
 
+        def contains_line(line: str) -> bool:
+            # A wrapped line may occur inside a chunk, but must not match
+            # only part of a numeric expression: 15 is not 15%, nor 100
+            # the suffix of -100 or 1100.
+            start = other.text.find(line)
+            while start >= 0:
+                end = start + len(line)
+                left = other.text[start - 1] if start else ""
+                right = other.text[end] if end < len(other.text) else ""
+                partial_left = line[0].isdigit() and (
+                    left.isdigit() or left in {"+", "-", ".", ","}
+                )
+                partial_right = line[-1].isdigit() and (
+                    right.isdigit() or right in {".", ",", "%", "‰"}
+                )
+                if not partial_left and not partial_right:
+                    return True
+                start = other.text.find(line, start + 1)
+            return False
+
         def present(squashed: str) -> bool:
             if squashed in other.lines:
                 return True
@@ -730,10 +763,10 @@ class _Lines:
                 and other.masked[mask] >= _RUNNING_LINES
             ):
                 return True
-            if squashed in other.text:
+            if contains_line(squashed):
                 return True
             body = self.body(squashed)
-            return body is not squashed and body in other.text
+            return body is not squashed and contains_line(body)
 
         verdicts: dict[str, bool] = {}
         reported: set[str] = set()
