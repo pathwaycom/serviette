@@ -529,7 +529,7 @@ class DecomposeConfig(BaseModel):
     One LLM call splits the question into standalone sub-queries ("mother of
     the 15th first lady?", "second assassinated president?"); retrieval runs
     for the original question and every sub-query, and the result lists are
-    fused with reciprocal-rank fusion. This keeps chunks of *different* hops
+    interleaved round-robin by rank. This keeps chunks of *different* hops
     from competing for the same top-k slots. Requires the ``llm`` section.
     """
 
@@ -543,9 +543,11 @@ class MmrConfig(BaseModel):
 
     The server fetches ``candidates`` chunks and greedily selects ``k`` of
     them, trading relevance against similarity to the already-selected set:
-    ``diversity`` is the weight of the redundancy penalty (0 = plain top-k,
-    1 = ignore relevance). Needs hit embeddings, so the backend must support
-    returning them (DuckDB for now).
+    ``diversity`` is the weight of the redundancy penalty (0 = preserve the
+    pool's top-k, 1 = ignore relevance). After decomposition, relevance comes
+    from the interleaved order unless a reranker supplies common scores.
+    ``candidates`` still widens the pool at zero diversity. Needs a backend
+    that returns hit embeddings.
     """
 
     model_config = ConfigDict(extra="forbid")

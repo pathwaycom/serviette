@@ -351,7 +351,13 @@ answer is not found.
   sub-queries, retrieves for each, and fuses — so chunks of different hops
   stop competing for the same top-k slots (`rag.decompose`).
 - **MMR.** Diversifies the result set, trading relevance against redundancy
-  (`rag.mmr`).
+  (`rag.mmr`). After query decomposition, relevance follows the interleaved
+  order: positions are mapped linearly from 1 (first) to 0 (last). For a
+  single query, or after a reranker, MMR uses min-max-normalized scores,
+  preserving their relative gaps. This selection signal does not replace
+  the `score` returned by the API. `diversity: 0` preserves the first `k`
+  hits of the candidate pool; `candidates` still widens retrieval, so hybrid
+  search or reranking can differ from a configuration without MMR.
 - **Document questions.** "How many documents do you have?", "What does
   `journal.pdf` say?", "What changed between `law_2023.txt` and
   `law_2024.txt`?" are questions about documents, not about a passage, and

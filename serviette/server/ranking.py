@@ -2,8 +2,8 @@
 
 Hits are the accessor result dicts (``text`` / ``metadata`` / ``score``,
 plus ``embedding`` when the accessor was asked for it). Scores coming from
-different queries or different scorers are not comparable, so fusion here is
-rank-based (reciprocal-rank fusion) rather than score-based.
+different queries or different scorers are not comparable, so fusion uses
+ranks: RRF for hybrid search, round-robin for decomposed queries.
 """
 
 from __future__ import annotations
@@ -78,23 +78,39 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 def mmr_select(
-    hits: list[dict[str, Any]], k: int, diversity: float
+    hits: list[dict[str, Any]],
+    k: int,
+    diversity: float,
+    *,
+    relevance: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Greedy maximal-marginal-relevance selection of ``k`` hits.
 
-    Relevance is the incoming order's score min-max-normalized over the pool;
-    redundancy is the max cosine similarity to the already-selected set (via
-    each hit's ``embedding``). ``diversity`` weighs redundancy: 0 reduces to
-    plain top-k, 1 ignores relevance entirely. Hits missing an embedding are
-    treated as maximally novel rather than dropped.
+    Hits arrive in relevance order. By default their scores must be comparable
+    across the pool and are min-max-normalized. Callers with incomparable
+    scores supply one ``relevance`` value in [0, 1] per hit, aligned with that
+    order. This selection signal is independent of the returned hit scores.
+
+    Redundancy is the max cosine similarity to the already-selected set (via
+    each hit's ``embedding``). ``diversity`` weighs redundancy: 0 preserves
+    the incoming top-k, 1 ignores relevance entirely. When the whole pool
+    fits, its incoming order is kept. Hits missing an embedding are treated
+    as maximally novel rather than dropped.
     """
 
+    if relevance is not None and len(relevance) != len(hits):
+        raise ValueError("MMR relevance must have one value per hit")
+    if k <= 0:
+        return []
+    if diversity == 0.0:
+        return hits[:k]
     if k >= len(hits) or not hits:
         return list(hits)
-    lo = min(h["score"] for h in hits)
-    hi = max(h["score"] for h in hits)
-    span = (hi - lo) or 1.0
-    relevance = [(h["score"] - lo) / span for h in hits]
+    if relevance is None:
+        lo = min(h["score"] for h in hits)
+        hi = max(h["score"] for h in hits)
+        span = (hi - lo) or 1.0
+        relevance = [(h["score"] - lo) / span for h in hits]
 
     selected: list[int] = []
     remaining = list(range(len(hits)))

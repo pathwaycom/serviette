@@ -3,6 +3,8 @@ decomposition, MMR, the LLM reranker and DuckDB hybrid search."""
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -297,6 +299,123 @@ def test_mmr_select_prefers_novelty_over_near_duplicates():
     # diversity=0 must reduce to plain top-k.
     plain = mmr_select(hits, 2, diversity=0.0)
     assert [h["text"] for h in plain] == ["a", "a-dup"]
+
+
+@pytest.mark.parametrize("k", [0, 1, 2, 3, 5])
+def test_mmr_zero_preserves_incoming_order(k):
+    hits = [{"text": "a", "score": 0.8}, {"text": "b", "score": 1.0}]
+    assert mmr_select(hits, k, diversity=0.0) == hits[:k]
+
+
+@pytest.mark.parametrize("diversity,expected", [(0.3, ["a", "a-dup"]), (0.5, ["a", "b"])])
+def test_mmr_explicit_relevance_is_independent_of_hit_scores(diversity, expected):
+    for scores in ([0.8, 1.0, 0.7], [0.98, 0.1, 0.9]):
+        hits = [
+            {"text": "a", "score": scores[0], "embedding": [1.0, 0.0]},
+            {"text": "a-dup", "score": scores[1], "embedding": [1.0, 0.001]},
+            {"text": "b", "score": scores[2], "embedding": [0.0, 1.0]},
+        ]
+        picked = mmr_select(hits, 2, diversity, relevance=[1.0, 0.9, 0.0])
+        assert [h["text"] for h in picked] == expected
+        assert [h["score"] for h in hits] == scores
+        assert all(h in hits for h in picked)
+
+
+def test_mmr_rejects_misaligned_relevance():
+    with pytest.raises(ValueError, match="one value per hit"):
+        mmr_select([{"score": 1.0}, {"score": 0.5}], 1, 0.3, relevance=[1.0])
+
+
+@pytest.fixture
+def mmr_store(tmp_path):
+    path = tmp_path / "mmr.duckdb"
+    # Each query finds two near duplicates. The A query has higher cosine
+    # scores, but round-robin gives both queries' best hits a leading slot.
+    rows = [
+        ("A1", [0.95, 0.0, math.sqrt(1 - 0.95**2), 0.0]),
+        ("A2", [0.9, 0.0, math.sqrt(1 - 0.9**2), 0.0]),
+        ("B1", [0.0, 0.2, 0.0, math.sqrt(1 - 0.2**2)]),
+        ("B2", [0.0, 0.1, 0.0, math.sqrt(1 - 0.1**2)]),
+    ]
+    write_duckdb_rows(
+        path, [{"id": text, "text": text, "embedding": emb} for text, emb in rows]
+    )
+    return path
+
+
+class _MmrQueryEmbedder:
+    async def embed(self, text):
+        return [0.0, 1.0, 0.0, 0.0] if text == "second fact" else [1.0, 0.0, 0.0, 0.0]
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.parametrize("diversity", [0.0, 1e-9, 0.3, 0.5, 1.0])
+def test_mmr_uses_decomposed_order_for_relevance(mmr_store, diversity):
+    app = _app(
+        mmr_store,
+        _MmrQueryEmbedder(),
+        llm=_DecomposingLLM(["second fact"]),
+        rag=RagConfig(decompose={"max_subqueries": 2}, mmr={"diversity": diversity}),
+    )
+    with TestClient(app) as client:
+        response = client.post("/api/v1/retrieve", json={"query": "question", "k": 2})
+    assert response.status_code == 200
+    hits = response.json()["results"]
+    assert [h["text"] for h in hits] == ["A1", "B1"]
+    assert [h["score"] for h in hits] == pytest.approx([0.95, 0.2])
+    assert all(set(h) == {"text", "score", "metadata"} for h in hits)
+
+
+@pytest.mark.parametrize("decompose", [False, True])
+def test_mmr_single_query_keeps_score_gaps(mmr_store, decompose):
+    # An empty decomposition falls back to one query. Scores remain comparable;
+    # replacing their large relevance gap with positions would select B1.
+    app = _app(
+        mmr_store,
+        _MmrQueryEmbedder(),
+        llm=_DecomposingLLM([]) if decompose else None,
+        rag=RagConfig(decompose={} if decompose else None, mmr={"diversity": 0.4}),
+    )
+    with TestClient(app) as client:
+        response = client.post("/api/v1/retrieve", json={"query": "question", "k": 2})
+    assert response.status_code == 200
+    assert [h["text"] for h in response.json()["results"]] == ["A1", "A2"]
+
+
+@pytest.mark.parametrize("decompose", [False, True])
+def test_mmr_uses_reranker_scores_after_fusion(mmr_store, decompose):
+    class ScoringChat:
+        async def raw(self, prompt):
+            text = prompt.rsplit("Document: ", 1)[1]
+            return {"A1": "4.9", "A2": "5", "B1": "0.2", "B2": "0"}[text]
+
+        async def close(self):
+            pass
+
+    config = ServietteConfig(
+        vector_db=DuckDbConfig(type="duckdb", path=str(mmr_store)),
+        embedder=EmbedderConfig(type="openai"),
+        rag=RagConfig(decompose={} if decompose else None, mmr={"diversity": 0.4}),
+        reranker=RerankerConfig(type="llm", candidates=4),
+        server=ServerConfig(serve_frontend=False),
+    )
+    app = create_app(
+        config,
+        embedder=_MmrQueryEmbedder(),
+        accessor=DuckDbAccessor(config.vector_db),
+        llm=_DecomposingLLM(["second fact"]) if decompose else None,
+        reranker=LLMReranker(config.reranker, chat=ScoringChat()),
+    )
+    with TestClient(app) as client:
+        response = client.post("/api/v1/retrieve", json={"query": "question", "k": 2})
+    assert response.status_code == 200
+    hits = response.json()["results"]
+    # Reranking changes the leader and provides a strong common relevance gap;
+    # retaining or recomputing positional relevance would pick B1 second.
+    assert [h["text"] for h in hits] == ["A2", "A1"]
+    assert [h["score"] for h in hits] == [5.0, 4.9]
 
 
 def test_mmr_endpoint_strips_embeddings(store_path, mock_server_embedder):

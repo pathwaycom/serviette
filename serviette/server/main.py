@@ -371,7 +371,14 @@ def create_app(
             keep = max(k, mmr.candidates) if mmr else k
             hits = await reranker.rerank(query, hits, keep)
         if mmr is not None:
-            hits = mmr_select(hits, k, mmr.diversity)
+            relevance = None
+            if len(queries) > 1 and reranker is None:
+                # Round-robin defines relevance by order, retaining scores
+                # from different queries. Map positions linearly from 1 to 0;
+                # a later reranker instead supplies comparable scores itself.
+                span = max(len(hits) - 1, 1)
+                relevance = [1.0 - i / span for i in range(len(hits))]
+            hits = mmr_select(hits, k, mmr.diversity, relevance=relevance)
         hits = hits[:k]
         # Embeddings are pipeline plumbing, not API surface.
         return [{key: v for key, v in h.items() if key != "embedding"} for h in hits]
