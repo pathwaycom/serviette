@@ -91,13 +91,15 @@ T_LINE_H = 26
 T_FONT = 17
 T_FIRST_Y = 56
 
-# Verbatim output of `serviette demo` (local embeddings, OPENAI_API_KEY set),
-# thinned: the heartbeat repeats every 5 s, three of them are kept.
+# Verbatim output of `serviette demo --embedder openai` (the README quickstart,
+# OPENAI_API_KEY set); only the working directory is replaced with
+# /home/you/serviette-demo.
 _INFO = "INFO "
 SCRIPT_UP = [
-    ("cmd", "serviette demo"),
-    ("out", _INFO + "Using local sentence-transformers embeddings; answers are "
-            "generated with OpenAI (OPENAI_API_KEY is set).", T_OUT),
+    ("cmd", "serviette demo --embedder openai"),
+    ("out", _INFO + "Using OpenAI embeddings for indexing: fast to start, but every "
+            "indexed token is billed — keep the corpus small. For large collections "
+            'install "serviette[local]" and use the default local embedder.', T_OUT),
     ("out", "", T_OUT),
     ("out", "─" * 72, T_OUT),
     ("out", " serviette demo — Lumina Coffee Systems", T_CMD),
@@ -120,20 +122,16 @@ SCRIPT_UP = [
     ("out", " Ctrl-C stops everything.", T_OUT),
     ("out", "─" * 72, T_OUT),
     ("out", "", T_OUT),
-    ("out", _INFO + "up: indexer started (pid 1986416)", T_OUT),
+    ("out", _INFO + "up: indexer started (pid 366777)", T_OUT),
     ("out", _INFO + "up: showing progress, warnings and errors only — run with --verbose "
             "for the full indexer and server log", T_OUT),
-    ("out", _INFO + "up: indexing in progress — the chat/API server starts once the first "
-            "documents are ready (0s elapsed)", T_OUT),
-    ("out", _INFO + "up: indexing in progress — the chat/API server starts once the first "
-            "documents are ready (16s elapsed)", T_OUT),
-    ("out", _INFO + "up: indexing in progress — the chat/API server starts once the first "
-            "documents are ready (32s elapsed)", T_OUT),
-    ("out", _INFO + "up: index is ready — starting the server (pid 2019552)", T_OUT),
+    ("out", _INFO + "up: indexing in progress — waiting for the first documents; the "
+            "chat/API server starts once the first documents are ready (0s elapsed)", T_OUT),
+    ("out", _INFO + "up: indexing in progress — 5 documents parsed; the chat/API server "
+            "starts once the first documents are ready (6s elapsed)", T_OUT),
+    ("out", _INFO + "up: index is ready — starting the server (pid 375748)", T_OUT),
     ("out", _INFO + "up: server starting — loading the query embedder; the URL appears once "
-            "it answers (1s elapsed)", T_OUT),
-    ("out", _INFO + "up: server starting — loading the query embedder; the URL appears once "
-            "it answers (11s elapsed)", T_OUT),
+            "it answers (0s elapsed)", T_OUT),
     ("out", _INFO, T_OUT),
     ("out", "  Ready — open http://localhost:8989", T_ACCENT),
     ("out", "  (Ctrl-C stops the indexer and the server)", T_OUT),
@@ -141,7 +139,7 @@ SCRIPT_UP = [
 
 # `demo` keeps the first terminal; the edit happens in a second one. `sed`
 # prints nothing, and in quiet mode neither does `up` — the change shows up
-# in the chat header ("indexed 3s ago") and in the answer.
+# in the chat header ("indexed 8s ago") and in the answer.
 SCRIPT_EDIT = [
     ("cmd", "sed -i 's/129 EUR/199 EUR/' serviette-demo/docs/pricing.md"),
 ]
@@ -250,19 +248,25 @@ F_BORDER = (230, 230, 233)
 F_TEXT = (31, 32, 35)
 F_SOFT = (107, 114, 128)
 F_ACCENT = (79, 70, 229)
+F_VIOLET = (139, 92, 246)
 F_USER_BG = (31, 32, 35)
 F_ASSIST_BG = (244, 244, 246)
 F_SOFTBG = (247, 247, 248)
 
-# What gpt-4o-mini answered on the bundled corpus, before and after the edit
-# (recorded with `serviette demo`, local embeddings, k=5).
+# What the default OpenAI model answered on the bundled corpus, before and
+# after the edit (recorded with `serviette demo --embedder openai`, k=5).
 QUESTION = "How much does the Team tier cost?"
 ANSWER_BEFORE = "The Team tier costs 129 EUR/month."
 ANSWER_AFTER = "The Team tier costs 199 EUR/month."
-# The header's live statistics line, as /api/v1/stats reported them.
-STATS_BEFORE = "duckdb · 5 chunks · 5 docs · indexed 2m ago"
-STATS_AFTER = "duckdb · 5 chunks · 5 docs · indexed 3s ago"
+# The header's live statistics line as the chat page showed it in that run:
+# (while the question is asked, once the answer is in).
+STATS_BEFORE = ("duckdb · 5 chunks · 5 docs · indexed 28s ago",
+                "duckdb · 5 chunks · 5 docs · indexed 35s ago · last answer 4.0s")
+STATS_AFTER = ("duckdb · 5 chunks · 5 docs · indexed 8s ago · last answer 4.0s",
+               "duckdb · 5 chunks · 5 docs · indexed 8s ago · last answer 1.4s")
 SOURCES_LABEL = "5 sources"
+HINT = ("Enter to send · Shift+Enter for a new line · Each question is answered "
+        "on its own — earlier messages are not taken into account")
 
 
 def _wrap(draw, text, fnt, max_w):
@@ -279,6 +283,35 @@ def _wrap(draw, text, fnt, max_w):
     return lines
 
 
+def _gradient_shape(img, box, shape, radius=0):
+    """Paste the UI's 135° accent→violet gradient into a rounded box or circle."""
+    x1, y1, x2, y2 = box
+    w, h = x2 - x1, y2 - y1
+    grad = Image.new("RGB", (w, h))
+    gd = ImageDraw.Draw(grad)
+    for i in range(w + h):
+        t = i / max(w + h - 1, 1)
+        col = tuple(round(a + (b - a) * t) for a, b in zip(F_ACCENT, F_VIOLET))
+        gd.line([(i, 0), (i - h, h)], fill=col, width=2)
+    mask = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(mask)
+    if shape == "circle":
+        md.ellipse([0, 0, w - 1, h - 1], fill=255)
+    else:
+        md.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
+    img.paste(grad, (x1, y1), mask)
+
+
+def _bubble(d, box, fill, tail):
+    """A chat bubble: 18 px corners, the one next to the avatar tightened to 6."""
+    x1, y1, x2, y2 = box
+    d.rounded_rectangle(box, radius=18, fill=fill)
+    if tail == "right":
+        d.rounded_rectangle([x2 - 24, y2 - 24, x2, y2], radius=6, fill=fill)
+    else:
+        d.rounded_rectangle([x1, y2 - 24, x1 + 24, y2], radius=6, fill=fill)
+
+
 def _draw_frontend(exchanges, composer_text, typing, indexed_note) -> Image.Image:
     """Render the chat with a list of (question, shown_answer_chars|None,
     show_sources) exchanges; ``typing`` draws the assistant dots after the
@@ -286,125 +319,133 @@ def _draw_frontend(exchanges, composer_text, typing, indexed_note) -> Image.Imag
 
     img = Image.new("RGB", (F_W, F_H), F_BG)
     d = ImageDraw.Draw(img)
-    sans = font("sans", 16)
-    sans_b = font("sans_bold", 16)
+    body = font("sans", 15)
     small = font("sans", 13)
+    tiny = font("sans", 12)
 
-    # header
-    d.line([0, 53, F_W, 53], fill=F_BORDER)
-    d.rounded_rectangle([20, 16, 46, 42], radius=8, fill=F_ACCENT)
-    d.text((56, 29), "serviette", font=sans_b, fill=F_TEXT, anchor="lm")
-    # right side: live statistics, then the "Documents" and settings buttons
+    # header: logo, title, the live statistics centred in the free space, then
+    # the "Documents" and settings buttons
+    d.line([0, 58, F_W, 58], fill=F_BORDER)
+    _gradient_shape(img, (20, 16, 46, 42), "box", radius=8)
+    d.text((56, 29), "serviette", font=font("sans_bold", 16), fill=F_TEXT, anchor="lm")
     x = F_W - 20
-    d.rounded_rectangle([x - 30, 15, x, 43], radius=8, outline=F_BORDER, fill=F_SOFTBG)
-    d.text((x - 15, 29), "⚙", font=font("sans", 14), fill=F_SOFT, anchor="mm")
-    x -= 38
-    d.rounded_rectangle([x - 86, 15, x, 43], radius=8, outline=F_BORDER, fill=F_SOFTBG)
-    d.text((x - 43, 29), "Documents", font=small, fill=F_SOFT, anchor="mm")
-    x -= 98
-    d.text((x, 29), indexed_note, font=small, fill=F_SOFT, anchor="rm")
+    d.rounded_rectangle([x - 30, 14, x, 44], radius=8, outline=F_BORDER, fill=F_SOFTBG)
+    d.text((x - 15, 29), "⚙", font=font("sans", 15), fill=F_SOFT, anchor="mm")
+    x -= 36
+    docs_w = d.textlength("Documents", font=small) + 22
+    d.rounded_rectangle([x - docs_w, 14, x, 44], radius=8, outline=F_BORDER, fill=F_SOFTBG)
+    d.text((x - docs_w / 2, 29), "Documents", font=small, fill=F_SOFT, anchor="mm")
+    title_end = 56 + d.textlength("serviette", font=font("sans_bold", 16))
+    d.text(((title_end + x - docs_w) / 2, 29), indexed_note, font=tiny, fill=F_SOFT, anchor="mm")
 
-    y = 78
+    y = 82
     if not exchanges and not composer_text:
-        d.text((F_W // 2, 200), "Ask anything about your documents",
-               font=font("sans_bold", 22), fill=F_TEXT, anchor="mm")
-        d.text((F_W // 2, 232), "Answers are grounded in your indexed knowledge base.",
-               font=sans, fill=F_SOFT, anchor="mm")
-        d.text((F_W // 2, 256), "Each question is answered on its own, without memory of earlier ones.",
-               font=sans, fill=F_SOFT, anchor="mm")
+        d.text((F_W // 2, 231), "Ask anything about your documents",
+               font=font("sans_bold", 26), fill=F_TEXT, anchor="mm")
+        d.text((F_W // 2, 266), "Answers are grounded in your indexed knowledge base. "
+               "Each question is answered on its own,", font=body, fill=F_SOFT, anchor="mm")
+        d.text((F_W // 2, 284), "without memory of earlier ones.",
+               font=body, fill=F_SOFT, anchor="mm")
 
     for i, (question, answer_chars, show_sources) in enumerate(exchanges):
-        # user bubble (right)
-        lines = _wrap(d, question, sans, 360)
-        bw = max(d.textlength(ln, font=sans) for ln in lines) + 32
-        bh = len(lines) * 24 + 20
-        bx2 = F_W - 24
-        d.rounded_rectangle([bx2 - bw, y, bx2, y + bh], radius=18, fill=F_USER_BG)
+        # user message (right): avatar at the edge, bubble next to it
+        lines = _wrap(d, question, body, 420)
+        bw = max(d.textlength(ln, font=body) for ln in lines) + 32
+        bh = len(lines) * 24 + 24
+        d.ellipse([F_W - 50, y + 2, F_W - 20, y + 32], fill=F_USER_BG)
+        d.text((F_W - 35, y + 17), "You", font=font("sans_bold", 13),
+               fill=(255, 255, 255), anchor="mm")
+        bx2 = F_W - 62
+        _bubble(d, [bx2 - bw, y, bx2, y + bh], F_USER_BG, "right")
         for j, ln in enumerate(lines):
-            d.text((bx2 - bw + 16, y + 12 + j * 24), ln, font=sans, fill=(255, 255, 255))
-        y += bh + 14
+            d.text((bx2 - bw + 16, y + 12 + j * 24), ln, font=body, fill=(255, 255, 255))
+        y += bh + 18
 
         # assistant side
-        ax = 24
-        d.ellipse([ax, y, ax + 30, y + 30], fill=F_ACCENT)
-        d.text((ax + 15, y + 15), "AI", font=font("sans_bold", 11),
-               fill=(255, 255, 255), anchor="mm")
-        bx = ax + 42
+        _gradient_shape(img, (20, y + 2, 50, y + 32), "circle")
+        d.text((35, y + 17), "AI", font=font("sans_bold", 13), fill=(255, 255, 255), anchor="mm")
+        bx = 62
         is_last = i == len(exchanges) - 1
         if is_last and typing:
-            d.rounded_rectangle([bx, y, bx + 70, y + 34], radius=16, fill=F_ASSIST_BG)
+            _bubble(d, [bx, y, bx + 70, y + 46], F_ASSIST_BG, "left")
             for k, on in enumerate(typing):
                 col = F_SOFT if on else (200, 203, 209)
-                d.ellipse([bx + 16 + k * 16, y + 14, bx + 23 + k * 16, y + 21], fill=col)
-            y += 44
+                d.ellipse([bx + 16 + k * 16, y + 20, bx + 23 + k * 16, y + 27], fill=col)
+            y += 64
         elif answer_chars is not None:
             full = ANSWER_AFTER if i == 1 else ANSWER_BEFORE
             shown = full[:answer_chars]
-            lines = _wrap(d, shown, sans, 470)
-            bh = len(lines) * 24 + 20
-            bw = (max((d.textlength(ln, font=sans) for ln in lines), default=0)) + 32
-            d.rounded_rectangle([bx, y, bx + max(bw, 90), y + bh], radius=18, fill=F_ASSIST_BG)
+            lines = _wrap(d, shown, body, 530)
+            bh = len(lines) * 24 + 24
+            bw = (max((d.textlength(ln, font=body) for ln in lines), default=0)) + 32
+            _bubble(d, [bx, y, bx + max(bw, 90), y + bh], F_ASSIST_BG, "left")
             for j, ln in enumerate(lines):
-                d.text((bx + 16, y + 12 + j * 24), ln, font=sans, fill=F_TEXT)
-            y += bh + 8
+                d.text((bx + 16, y + 12 + j * 24), ln, font=body, fill=F_TEXT)
+            y += bh + 19
             if show_sources:
                 # The UI's collapsed <details> block listing the passages used.
-                d.rounded_rectangle([bx, y, bx + 130, y + 28], radius=10,
+                d.rounded_rectangle([bx, y, bx + 562, y + 32], radius=12,
                                     fill=F_SOFTBG, outline=F_BORDER)
-                d.text((bx + 12, y + 14), "▸  " + SOURCES_LABEL, font=small,
+                d.text((bx + 12, y + 16), "▶ " + SOURCES_LABEL, font=small,
                        fill=F_SOFT, anchor="lm")
-                y += 38
-        y += 10
+                y += 32
+            y += 18
 
     # composer
-    cy = F_H - 74
-    d.rounded_rectangle([24, cy, F_W - 24, cy + 50], radius=22,
+    cy = F_H - 114
+    d.rounded_rectangle([20, cy, F_W - 20, cy + 55], radius=22,
                         outline=F_BORDER, width=1, fill=F_BG)
     text = composer_text if composer_text else "Message…"
     color = F_TEXT if composer_text else F_SOFT
-    d.text((44, cy + 25), text, font=sans, fill=color, anchor="lm")
-    d.ellipse([F_W - 24 - 46, cy + 6, F_W - 24 - 8, cy + 44], fill=F_ACCENT)
-    cx, cyy = F_W - 24 - 27, cy + 25
-    d.line([cx - 6, cyy + 5, cx + 6, cyy - 6], fill=(255, 255, 255), width=2)
-    d.line([cx + 6, cyy - 6, cx + 1, cyy - 6], fill=(255, 255, 255), width=2)
-    d.line([cx + 6, cyy - 6, cx + 6, cyy - 1], fill=(255, 255, 255), width=2)
-    d.text((F_W // 2, F_H - 12),
-           "Enter to send · Shift+Enter for a new line · Each question is answered on its own",
-           font=font("sans", 11), fill=F_SOFT, anchor="mm")
+    d.text((39, cy + 27), text, font=font("sans", 16), fill=color, anchor="lm")
+    bx1, by1 = F_W - 67, cy + 8
+    d.ellipse([bx1, by1, bx1 + 38, by1 + 38], fill=F_ACCENT)
+    # the send button's paper-plane icon (lucide "send", 24-unit viewBox at 18 px)
+    s, ox, oy = 18 / 24, bx1 + 10, by1 + 10
+    pt = lambda px, py: (ox + px * s, oy + py * s)  # noqa: E731
+    white = (255, 255, 255)
+    d.line([pt(22, 2), pt(11, 13)], fill=white, width=2)
+    d.line([pt(22, 2), pt(15, 22), pt(11, 13), pt(2, 9), pt(22, 2)], fill=white, width=2, joint="curve")
+    # the hint wraps to two lines at this width, as it does in the browser
+    hint = _wrap(d, HINT, tiny, F_W - 40)
+    for j, ln in enumerate(hint):
+        d.text((F_W // 2, F_H - 44 + j * 16), ln, font=tiny, fill=F_SOFT, anchor="mm")
     return img
 
 
-def build_chat(prior, answer, indexed_note) -> tuple[list[Image.Image], list[int]]:
+def build_chat(prior, answer, notes) -> tuple[list[Image.Image], list[int]]:
     """One question/answer beat: type the question, dots, reveal ``answer``.
 
-    ``prior`` is a list of completed exchanges rendered above (the history).
+    ``prior`` is a list of completed exchanges rendered above (the history);
+    ``notes`` is the header statistics line while asking and once answered.
     """
 
     frames: list[Image.Image] = []
     durs: list[int] = []
+    asking, answered = notes
 
     def add(frame, dur):
         frames.append(frame)
         durs.append(dur)
 
     done = [(q, chars, True) for q, chars in prior]
-    add(_draw_frontend(done, "", None, indexed_note), 900)
+    add(_draw_frontend(done, "", None, asking), 900)
     cur = ""
     for i, ch in enumerate(QUESTION):
         cur += ch
         if i % 2 == 0 or i == len(QUESTION) - 1:
-            add(_draw_frontend(done, cur, None, indexed_note), 40)
-    add(_draw_frontend(done, QUESTION, None, indexed_note), 300)
+            add(_draw_frontend(done, cur, None, asking), 40)
+    add(_draw_frontend(done, QUESTION, None, asking), 300)
 
     pending = done + [(QUESTION, None, False)]
     for _ in range(2):
         for pat in [(1, 0, 0), (1, 1, 0), (1, 1, 1)]:
-            add(_draw_frontend(pending, "", pat, indexed_note), 200)
+            add(_draw_frontend(pending, "", pat, asking), 200)
 
     for frac in (0.4, 0.8, 1.0):
         shown = done + [(QUESTION, int(len(answer) * frac), False)]
-        add(_draw_frontend(shown, "", None, indexed_note), 380)
-    add(_draw_frontend(done + [(QUESTION, len(answer), True)], "", None, indexed_note), 2600)
+        add(_draw_frontend(shown, "", None, asking), 380)
+    add(_draw_frontend(done + [(QUESTION, len(answer), True)], "", None, answered), 2600)
     return frames, durs
 
 
@@ -424,7 +465,7 @@ def _onto_canvas(img: Image.Image, bg: tuple[int, int, int]) -> Image.Image:
 def render_combined_gif() -> None:
     # Beat 1: `serviette demo` up to "Ready — open". Beat 2: ask about the
     # Team tier -> 129 EUR. Beat 3: sed edits pricing.md in a second terminal.
-    # Beat 4: the same question -> 199 EUR, header says "indexed 3s ago".
+    # Beat 4: the same question -> 199 EUR, header says "indexed 8s ago".
     t1_frames, t1_durs, _ = build_terminal(SCRIPT_UP)
     c1_frames, c1_durs = build_chat([], ANSWER_BEFORE, STATS_BEFORE)
     t2_frames, t2_durs, _ = build_terminal(
