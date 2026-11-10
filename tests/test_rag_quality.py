@@ -473,6 +473,90 @@ def test_rrf_merge_rewards_presence_in_multiple_lists():
     assert {m["text"] for m in merged} == {"x", "y", "z"}
 
 
+@pytest.mark.parametrize("copies", [1, 2, 10])
+def test_rrf_merge_ranks_unique_texts_within_each_list(copies):
+    a = {"text": "a", "score": 0.9}
+    b = {"text": "b", "score": 0.8}
+    c = {"text": "c", "score": 0.7}
+    merged = rrf_merge([[a, *([b] * copies), c], [a, b]], 3)
+    assert [hit["text"] for hit in merged] == ["a", "b", "c"]
+    assert [hit["score"] for hit in merged] == pytest.approx([2 / 61, 2 / 62, 1 / 63])
+
+
+@pytest.mark.parametrize("copies", [1, 3, 10])
+@pytest.mark.parametrize("limit", [0, 1, 3, 10])
+@pytest.mark.parametrize("placement", ["adjacent", "at_end"])
+def test_rrf_merge_is_unchanged_when_copies_are_inserted(copies, limit, placement):
+    lists = [
+        [{"text": text, "score": 0.9} for text in ("a", "b", "c")],
+        [],
+        [{"text": text, "score": 0.1} for text in ("d", "b", "e", "a")],
+    ]
+    repeated = (
+        [[hit for hit in hits for _ in range(copies + 1)] for hits in lists]
+        if placement == "adjacent"
+        else [hits * (copies + 1) for hits in lists]
+    )
+    assert rrf_merge(repeated, limit) == rrf_merge(lists, limit)
+
+
+def test_rrf_merge_preserves_the_first_hits_metadata_and_embedding():
+    import copy
+
+    first = {"text": "same text", "metadata": {"path": "first.txt"},
+             "embedding": [1.0, 0.0], "score": 0.5}
+    other = {"text": "same text", "metadata": {"path": "other.txt"},
+             "embedding": [0.0, 1.0], "score": 99.0}
+    lists = [[first, other], [other]]
+    original = copy.deepcopy(lists)
+    merged = rrf_merge(lists, 3)
+    assert merged == [{**first, "score": 2 / 61}]
+    assert lists == original
+
+
+def test_rrf_merge_does_not_evict_an_answer_for_repeated_boilerplate():
+    hits = {text: {"text": text, "score": 0.5} for text in ("a", "b", "c", "d", "e")}
+    merged = rrf_merge(
+        [[hits[text] for text in ("c", "a", "e")],
+         [hits[text] for text in ("d", "b", "b")]],
+        3,
+    )
+    assert [hit["text"] for hit in merged] == ["c", "d", "a"]
+
+
+def test_hybrid_retrieval_is_unchanged_by_a_duplicate_text(tmp_path, mock_server_embedder):
+    import json
+
+    import duckdb
+
+    path = tmp_path / "duplicates.duckdb"
+    texts = [
+        "payment term is thirty days",
+        "payment term conditions",
+        "payment term annual invoice and notice details",
+    ]
+    rows = [{"id": str(i), "text": text, "metadata": {"path": f"{i}.txt"},
+             "embedding": fake_embedding(text)} for i, text in enumerate(texts)]
+    write_duckdb_rows(path, rows)
+
+    def retrieve():
+        with TestClient(_app(path, mock_server_embedder, hybrid=True)) as client:
+            response = client.post("/api/v1/retrieve", json={"query": texts[0], "k": 10})
+        assert response.status_code == 200
+        return [(hit["text"], hit["score"]) for hit in response.json()["results"]]
+
+    before = retrieve()
+    with duckdb.connect(str(path)) as conn:
+        conn.execute(
+            "INSERT INTO serviette_embeddings VALUES (?, ?, ?, ?)",
+            ["duplicate", texts[1], json.dumps({"path": "duplicate.txt"}),
+             fake_embedding(texts[1])],
+        )
+    after = retrieve()
+    assert len(before) == 3
+    assert after == before
+
+
 # ---------------------------------------------------------------------------
 # LLM reranker
 # ---------------------------------------------------------------------------

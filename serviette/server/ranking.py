@@ -22,16 +22,20 @@ def rrf_merge(
 ) -> list[dict[str, Any]]:
     """Fuse ranked result lists with reciprocal-rank fusion.
 
-    A hit appearing in several lists (same ``text``) sums its 1/(RRF_K + rank)
-    contributions, so chunks that answer *several* sub-queries rise. The fused
-    RRF value replaces ``score`` — original per-query similarities are not
-    comparable across lists.
+    Each list votes once per distinct ``text``, ranked in first-occurrence
+    order after duplicates are removed. A text appearing in several lists
+    sums its 1/(RRF_K + rank) contributions, rewarding agreement between
+    searches. The fused RRF value replaces ``score`` — original scores are
+    not comparable across lists.
     """
 
     fused: dict[str, dict[str, Any]] = {}
     scores: dict[str, float] = {}
     for hits in result_lists:
-        for rank, hit in enumerate(hits):
+        unique: dict[str, dict[str, Any]] = {}
+        for hit in hits:
+            unique.setdefault(hit["text"], hit)
+        for rank, hit in enumerate(unique.values()):
             key = hit["text"]
             scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank + 1)
             # Keep the first-seen dict (embedding included when present).
