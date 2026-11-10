@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import contextmanager
 from typing import Any
 
 from serviette.server.accessors.abstract import (
@@ -118,14 +119,33 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
             f"over {self._LOCK_WAIT:.0f}s"
         ) from last_exc
 
+    @contextmanager
+    def _connection(self):
+        """Close every reader and translate a missing table consistently.
+
+        Keep other catalog errors (for example, an unavailable SQL function)
+        visible: they do not mean the indexer has yet to create its table.
+        """
+        import duckdb
+
+        conn = self._connect_with_retry()
+        try:
+            yield conn
+        except duckdb.CatalogException as exc:
+            message = str(exc)
+            if "Table with name" not in message or "does not exist" not in message:
+                raise
+            raise IndexNotReadyError(
+                f"table {self._table!r} does not exist yet in {self._path!r}"
+            ) from exc
+        finally:
+            conn.close()
+
     def _query(
         self, embedding: list[float], k: int, *, with_embeddings: bool = False
     ) -> list[dict[str, Any]]:
-        import duckdb
-
         embedding_col = ", embedding" if with_embeddings else ""
-        conn = self._connect_with_retry()
-        try:
+        with self._connection() as conn:
             rows = conn.execute(
                 f"SELECT text, metadata, "
                 f"  list_cosine_similarity(embedding, ?::DOUBLE[]) AS score"
@@ -135,13 +155,6 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
                 f"ORDER BY score DESC NULLS LAST LIMIT ?",
                 [list(map(float, embedding)), k],
             ).fetchall()
-        except duckdb.CatalogException as exc:
-            # The file exists but the table has not been created yet.
-            raise IndexNotReadyError(
-                f"table {self._table!r} does not exist yet in {self._path!r}"
-            ) from exc
-        finally:
-            conn.close()
         results: list[dict[str, Any]] = []
         for text, metadata, score, *rest in rows:
             if isinstance(metadata, str):
@@ -157,13 +170,10 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return results
 
     def _count_rows(self) -> int:
-        conn = self._connect_with_retry()
-        try:
+        with self._connection() as conn:
             (count,) = conn.execute(
                 f'SELECT count(*) FROM "{self._table}" WHERE embedding IS NOT NULL'
             ).fetchone()
-        finally:
-            conn.close()
         return int(count)
 
     def _version(self) -> tuple[int, Any]:
@@ -171,15 +181,12 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         with a fresher ``seen_at``, so in-place edits that keep the chunk
         count move this where the count alone would not."""
 
-        conn = self._connect_with_retry()
-        try:
+        with self._connection() as conn:
             count, newest = conn.execute(
                 f"SELECT count(*),"
                 f"  max(TRY_CAST(json_extract(metadata, '$.seen_at') AS BIGINT)) "
                 f'FROM "{self._table}" WHERE embedding IS NOT NULL'
             ).fetchone()
-        finally:
-            conn.close()
         return int(count), newest
 
     def _fetch_all_rows(self, with_embeddings: bool) -> list[dict[str, Any]]:
@@ -191,14 +198,11 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         """
 
         embedding_col = ", embedding" if with_embeddings else ""
-        conn = self._connect_with_retry()
-        try:
+        with self._connection() as conn:
             rows = conn.execute(
                 f'SELECT text, metadata{embedding_col} FROM "{self._table}" '
                 f"WHERE embedding IS NOT NULL"
             ).fetchall()
-        finally:
-            conn.close()
         hits = []
         for row in rows:
             text, metadata = row[0], row[1]
@@ -224,16 +228,13 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return await asyncio.to_thread(self._list_documents)
 
     def _list_documents(self) -> list[dict[str, Any]]:
-        conn = self._connect_with_retry()
-        try:
+        with self._connection() as conn:
             rows = conn.execute(
                 f"SELECT {self._DOCUMENT_SQL} AS document, count(*),"
                 f"  any_value(metadata) "
                 f'FROM "{self._table}" WHERE embedding IS NOT NULL '
                 f"GROUP BY document HAVING document IS NOT NULL AND document <> ''"
             ).fetchall()
-        finally:
-            conn.close()
         documents = []
         for document, chunks, metadata in rows:
             if isinstance(metadata, str):
@@ -254,15 +255,12 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         self, document: str, with_embeddings: bool
     ) -> list[dict[str, Any]]:
         embedding_col = ", embedding" if with_embeddings else ""
-        conn = self._connect_with_retry()
-        try:
+        with self._connection() as conn:
             rows = conn.execute(
                 f'SELECT text, metadata{embedding_col} FROM "{self._table}" '
                 f"WHERE embedding IS NOT NULL AND {self._DOCUMENT_SQL} = ?",
                 [document],
             ).fetchall()
-        finally:
-            conn.close()
         hits = []
         for row in rows:
             text, metadata = row[0], row[1]
@@ -278,8 +276,7 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
         return await asyncio.to_thread(self._stats)
 
     def _stats(self) -> dict[str, Any]:
-        conn = self._connect_with_retry()
-        try:
+        with self._connection() as conn:
             # A document is identified by whatever the source reports: ``path``
             # (fs, s3, sharepoint, pyfilesystem) or ``id`` / ``name`` (gdrive).
             chunks, documents, last = conn.execute(
@@ -291,8 +288,6 @@ class DuckDbAccessor(KeywordHybridMixin, AsyncVectorAccessor):
                 f"  max(TRY_CAST(json_extract(metadata, '$.seen_at') AS BIGINT)) "
                 f'FROM "{self._table}"'
             ).fetchone()
-        finally:
-            conn.close()
         out: dict[str, Any] = {"chunks": int(chunks), "documents": int(documents)}
         if last:
             out["last_indexed_at"] = int(last)
