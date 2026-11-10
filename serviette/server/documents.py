@@ -231,7 +231,13 @@ def mentioned_names(query: str, catalog: list[dict[str, Any]]) -> list[str]:
     before it is looked up in a dict of catalog names.
     """
 
-    folded = _fold(query)
+    # Keep whitespace so positions stay relative to the full query. Case
+    # folding can still expand characters (e.g. ß -> ss), so each folded
+    # character records the position it came from in the original string.
+    folded = query.casefold()
+    original_positions = [
+        index for index, char in enumerate(query) for _ in char.casefold()
+    ]
     known, longest, extension_end, file_like = _name_index(catalog)
 
     found: dict[str, int] = {}
@@ -256,7 +262,9 @@ def mentioned_names(query: str, catalog: list[dict[str, Any]]) -> list[str]:
     for match in file_like.finditer(folded):
         if any(s <= match.start() < e for s, e in claimed):
             continue
-        found.setdefault(query[match.start() : match.end()], match.start())
+        start = original_positions[match.start()]
+        end = original_positions[match.end() - 1] + 1
+        found.setdefault(query[start:end], match.start())
     return sorted(found, key=found.__getitem__)
 
 

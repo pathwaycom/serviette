@@ -165,6 +165,32 @@ def test_mentioned_names_needs_a_full_file_name(query, expected):
     assert docmode.mentioned_names(query, CATALOG) == expected
 
 
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("  open missing.pdf  ", ["missing.pdf"]),
+        ("\t\nopen missing.pdf", ["missing.pdf"]),
+        ("Straße missing.pdf", ["missing.pdf"]),
+        ("open Straße.pdf", ["Straße.pdf"]),
+        ("İSTANBUL missing.pdf", ["missing.pdf"]),
+        ("open oﬃce.pdf", ["oﬃce.pdf"]),
+        (
+            "  compare Straße.pdf with menu.md and Журнал.pdf  ",
+            ["Straße.pdf", "menu.md", "Журнал.pdf"],
+        ),
+    ],
+)
+def test_mentioned_names_preserves_original_filename_offsets(query, expected):
+    assert docmode.mentioned_names(query, CATALOG) == expected
+
+
+def test_mentioned_names_unicode_catalog_path_claims_the_full_filename():
+    catalog = [{"id": "/docs/Straße.pdf", "metadata": {}, "chunks": 1}]
+    assert docmode.mentioned_names(
+        "  compare /docs/STRASSE.PDF with missing.pdf", catalog
+    ) == ["/docs/Straße.pdf", "missing.pdf"]
+
+
 def test_resolve_names_exact_stem_close_ambiguous_and_missing():
     resolution = docmode.resolve_names(
         ["menu.md", "law_2023", "law_2024.tx", "journal.pdf", "budget.xlsx"], CATALOG
