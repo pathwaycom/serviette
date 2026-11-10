@@ -614,9 +614,46 @@ class DocumentContext:
 
     context: list[str]
     sources: list[dict[str, Any]]
+    # One group per material item (the header has no sources). A diff item
+    # can cite two chunks, and the same chunk can support several items.
+    source_groups: list[list[dict[str, Any]]]
+    base_header: str
+    total_parts: int
+    part_kind: str = "parts"
     notice: str | None = None
     # Which instructions go with ``context``.
     system_prompt: str = DOCUMENT_SYSTEM_PROMPT
+
+    def fit(self, chars: int) -> bool:
+        """Fit the request's remaining room, keeping coverage and citations
+        aligned with the material. The updated header counts toward the room.
+        Returns whether material was trimmed. A header that cannot fit is
+        retained for the non-LLM fallback."""
+
+        if sum(map(len, self.context)) <= chars:
+            return False
+        parts = self.context[1:]
+        used = sum(map(len, parts))
+        while True:
+            coverage = f"Only {len(parts)} of {self.total_parts} {self.part_kind} are shown."
+            header = (
+                f"{self.base_header}\n{coverage} The request reached its LLM budget; "
+                "base the answer only on the material shown."
+            )
+            if not parts or len(header) + used <= chars:
+                break
+            used -= len(parts.pop())
+        self.context = [header, *parts]
+        self.source_groups = self.source_groups[: len(parts)]
+        seen: set[int] = set()
+        self.sources = []
+        for group in self.source_groups:
+            for source in group:
+                if id(source) not in seen:
+                    seen.add(id(source))
+                    self.sources.append(source)
+        self.notice = coverage
+        return True
 
 
 def single_document_context(
@@ -631,6 +668,7 @@ def single_document_context(
     hits = _rank(chunks, query_embedding)
     taken = _take(hits, budget)
     header = "Document: " + _describe(entry)
+    base_header = header
     notice = None
     if len(taken) < len(hits):
         header += (
@@ -644,7 +682,12 @@ def single_document_context(
     else:
         header += "\nThe whole document is shown."
     return DocumentContext(
-        context=[header, *(h["text"] for h in taken)], sources=taken, notice=notice
+        context=[header, *(h["text"] for h in taken)],
+        sources=taken,
+        source_groups=[[h] for h in taken],
+        base_header=base_header,
+        total_parts=len(hits),
+        notice=notice,
     )
 
 
@@ -932,12 +975,16 @@ def compare_context(
             partial.append(f"{len(taken)} of {len(hits)} parts of {name}")
         context.extend(f"[{name}] {h['text']}" for h in taken)
         sources.extend(taken)
+    base_header = context[0]
     notice = "Compared using " + ", ".join(partial) + "." if partial else None
     if partial:
         context[0] += "\nShown: " + ", ".join(partial) + "."
     return DocumentContext(
         context=context,
         sources=sources,
+        source_groups=[[h] for h in sources],
+        base_header=base_header,
+        total_parts=sum(map(len, chunks)),
         notice=notice,
         system_prompt=EXCERPTS_SYSTEM_PROMPT,
     )
@@ -991,7 +1038,8 @@ def _diff_context(
 
     shown: list[str] = []
     sources: list[dict[str, Any]] = []
-    cited: set[tuple[int, int]] = set()
+    source_groups: list[list[dict[str, Any]]] = []
+    cited: dict[tuple[int, int], dict[str, Any]] = {}
     used = 0
     for text, origins, _relevance in blocks:
         if used + len(text) > budget:
@@ -1000,17 +1048,18 @@ def _diff_context(
             text = text[:budget]
         shown.append(text)
         used += len(text)
+        group = []
         for doc, chunk in origins:
             if (doc, chunk) not in cited:
-                cited.add((doc, chunk))
                 source = chunks[doc][chunk]
-                sources.append(
-                    {
-                        "text": source["text"],
-                        "metadata": source.get("metadata") or {},
-                        "score": score(doc, chunk),
-                    }
-                )
+                cited[doc, chunk] = {
+                    "text": source["text"],
+                    "metadata": source.get("metadata") or {},
+                    "score": score(doc, chunk),
+                }
+                sources.append(cited[doc, chunk])
+            group.append(cited[doc, chunk])
+        source_groups.append(group)
 
     totals = (
         f"{len(pairs)} passages changed, {len(added)} only in {name_b}, "
@@ -1023,6 +1072,7 @@ def _diff_context(
         f"Totals: {totals}."
     )
     notice = f"Compared {name_a} and {name_b}: {totals}."
+    base_header = header
     if len(shown) < len(blocks):
         partial = (
             f" Showing {len(shown)} of {len(blocks)} differences (the ones "
@@ -1035,6 +1085,10 @@ def _diff_context(
     return DocumentContext(
         context=[header, *shown],
         sources=sources,
+        source_groups=source_groups,
+        base_header=base_header,
+        total_parts=len(blocks),
+        part_kind="differences",
         notice=notice,
         system_prompt=COMPARE_SYSTEM_PROMPT,
     )

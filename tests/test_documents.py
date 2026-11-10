@@ -597,6 +597,79 @@ def test_budget_fit_trims_then_refuses():
     assert not budget.take(400) and budget.take(300)
 
 
+@pytest.mark.parametrize("mode", ["document", "excerpts", "diff"])
+def test_document_request_budget_updates_coverage_and_sources(
+    tmp_path, mock_server_embedder, mode
+):
+    if mode == "document":
+        corpus = {"/docs/report.txt": [str(i) * 900 for i in range(3)]}
+        query = "summarize report.txt"
+    elif mode == "excerpts":
+        corpus = {
+            "/docs/a.txt": ["a" * 900, "b" * 900],
+            "/docs/b.txt": ["c" * 900, "d" * 900],
+        }
+        query = "compare a.txt and b.txt"
+    else:
+        shared = [f"Article {i}. An unchanged provision shared by both files." for i in range(8)]
+        corpus = {
+            f"/docs/{name}.txt": shared + [
+                f"Clause {i}: the {version} terms apply. " + "stable wording " * 18
+                for i in range(3)
+            ]
+            for name, version in (("a", "old"), ("b", "new"))
+        }
+        query = "compare a.txt and b.txt"
+    rows = [
+        {
+            "id": f"{path}-{i}", "text": text, "metadata": {"path": path},
+            "embedding": fake_embedding("same score"),
+        }
+        for path, texts in corpus.items() for i, text in enumerate(texts)
+    ]
+    store = tmp_path / "budget.duckdb"
+    write_duckdb_rows(store, rows)
+    llm = _ScriptedLLM()
+    body = _ask(
+        store, mock_server_embedder, llm, query,
+        rag=RagConfig(documents={"max_request_chars": 2_000}),
+    )
+    assert len(llm.calls) == 1
+    call = llm.calls[0]
+    header, *material = call["context"]
+    assert "whole document is shown" not in header
+    assert f"Only {len(material)} of" in header
+    assert "LLM budget" in body["notice"]
+    assert len(query) + len(call["system_prompt"]) + sum(map(len, call["context"])) <= 2_000
+    assert len(material) == 1
+    assert len(body["sources"]) == (2 if mode == "diff" else 1)
+    assert all(source["text"].strip() in material[0] for source in body["sources"])
+
+
+@pytest.mark.parametrize("query_padding", [0, 2_000])
+def test_document_budget_without_material_has_no_sources(
+    tmp_path, mock_server_embedder, query_padding
+):
+    store = tmp_path / "budget.duckdb"
+    write_duckdb_rows(store, [{
+        "id": "report", "text": "x" * 3_000,
+        "metadata": {"path": "/docs/report.txt"},
+        "embedding": fake_embedding("report"),
+    }])
+    llm = _ScriptedLLM()
+    body = _ask(
+        store, mock_server_embedder, llm, "summarize report.txt " + "q" * query_padding,
+        rag=RagConfig(documents={"max_request_chars": 2_000}),
+    )
+    assert body["sources"] == []
+    assert "Only 0 of 1 parts" in (llm.calls[0]["context"][0] if llm.calls else body["answer"])
+    assert "LLM budget" in body["notice"]
+    if query_padding:
+        assert llm.calls == []
+    else:
+        assert len(llm.calls[0]["context"]) == 1
+
+
 def test_unrelated_documents_share_the_budget(store_path, mock_server_embedder):
     llm = _ScriptedLLM()
     body = _ask(

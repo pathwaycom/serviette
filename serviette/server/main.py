@@ -619,15 +619,21 @@ def create_app(
             built = await asyncio.to_thread(
                 docmode.compare_context, entries, chunks, query_embedding, limit
             )
+        if budget is not None:
+            room = budget.left - len(query) - len(built.system_prompt)
+            if budget.left < budget._MIN_CALL:
+                room = 0
+            if built.fit(room):
+                budget.exhausted = True
         reply = await _complete(budget, query, built.context, built.system_prompt)
         notice = built.notice
-        if reply is None or len(reply[1]) < len(built.context):
+        if reply is None or (budget is not None and budget.exhausted):
             notice = (notice or "") + _BUDGET_NOTICE
         return RagResponse(
             # Out of budget: the header (what was read, the exact totals) is
             # the system's own and stands alone.
             answer=reply[0] if reply else built.context[0],
-            sources=[RetrieveResult(**h) for h in built.sources],
+            sources=[RetrieveResult(**h) for h in built.sources] if reply else [],
             mode=mode,
             documents=[str(entry["id"]) for entry in entries],
             notice=notice.strip() if notice else None,
