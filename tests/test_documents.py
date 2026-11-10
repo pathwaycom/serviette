@@ -397,6 +397,128 @@ def test_version_diff_preserves_numeric_meaning(old, new):
     assert "1 passages changed" in built.notice
 
 
+def _compare_text_versions(old: str, new: str, window_size: int | None = None):
+    entries = [{"id": name, "metadata": {}, "chunks": 1} for name in ("old.txt", "new.txt")]
+    chunks = [
+        _windows(text, window_size) if window_size else [{"text": text, "metadata": {}}]
+        for text in (old, new)
+    ]
+    return docmode.compare_context(entries, chunks, fake_embedding("q"), budget=24_000)
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("Rate: 10%", "Rate: 20%"),
+        ("100", "200"),
+        ("100", "1100"),
+        ("100", "-100"),
+        ("+100", "-100"),
+        ("1.5", "15"),
+        ("15%", "15"),
+        ("01.02.2026", "02.02.2026"),
+        ("Да", "Нет"),
+        ("On", "Off"),
+    ],
+)
+@pytest.mark.parametrize("window_size", [None, 160, 240])
+def test_version_diff_reports_short_value_changes(old, new, window_size):
+    before = "\n".join(SHARED[:3]) + "\n"
+    after = "\n" + "\n".join(SHARED[3:])
+    built = _compare_text_versions(before + old + after, before + new + after, window_size)
+    blocks = built.context[1:]
+    assert "share most of their text" in built.context[0]
+    assert any(f"old.txt: {old}" in b or f"[only in old.txt] {old}" in b for b in blocks)
+    assert any(f"new.txt: {new}" in b or f"[only in new.txt] {new}" in b for b in blocks)
+    assert "No differences were found" not in built.context[0]
+    assert not any("Unchanged provision" in b for b in blocks)
+
+
+@pytest.mark.parametrize("value", ["100", "Да", "Rate: 10%"])
+@pytest.mark.parametrize("added", [False, True])
+def test_version_diff_reports_short_line_additions_and_removals(value, added):
+    unchanged = "\n".join(SHARED)
+    changed = unchanged + "\n" + value
+    old, new = (unchanged, changed) if added else (changed, unchanged)
+    built = _compare_text_versions(old, new)
+    name = "new.txt" if added else "old.txt"
+    assert built.context[1:] == [f"[only in {name}] {value}"]
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("Rate: 10%", " Rate : 10 % "),
+        ("Net: -100", "Net: − 100"),
+        ("Да", " ДА! "),
+        ("Café", "Cafe\u0301"),
+        ("office", "of\u00adfice"),
+        ("Rate: 10%", "Rate:\n10%"),
+        ("Rate:\n10%", "Rate: 10%"),
+        ("The status is Active", "The status is\nActive"),
+        ("The status is\nActive", "The status is Active"),
+        ("", "\n---\n...\n"),
+    ],
+)
+@pytest.mark.parametrize("window_size", [None, 160, 240])
+def test_version_diff_ignores_formatting_changes_around_short_lines(old, new, window_size):
+    before = "\n".join(SHARED[:3]) + "\n"
+    after = "\n" + "\n".join(SHARED[3:])
+    built = _compare_text_versions(before + old + after, before + new + after, window_size)
+    assert "share most of their text" in built.context[0]
+    assert built.context[1:] == []
+    assert "0 passages changed, 0 only in new.txt, 0 only in old.txt" in built.notice
+
+
+def test_short_common_values_do_not_make_unrelated_documents_versions():
+    common = "\n".join(f"Code {i}" for i in range(30))
+    old = common + "\n" + "\n".join(SHARED)
+    new = common + "\n" + "\n".join(
+        f"Chapter {i}. Instructions for preparing a vegetable soup." for i in range(6)
+    )
+    built = _compare_text_versions(old, new)
+    assert built.system_prompt == docmode.EXCERPTS_SYSTEM_PROMPT
+    assert "share little or no identical text" in built.context[0]
+
+
+@pytest.mark.parametrize(
+    "old,new,other",
+    [("100", "200", "1100"), ("On", "Off", "authentication.")],
+)
+def test_short_chunks_are_not_confused_with_other_value_suffixes(old, new, other):
+    entries = [{"id": name, "metadata": {}, "chunks": 8} for name in ("old.txt", "new.txt")]
+    common = [{"text": line, "metadata": {}} for line in SHARED]
+    common.append({"text": "A separate unchanged field contains " + other, "metadata": {}})
+    chunks = [[*common, {"text": value, "metadata": {}}] for value in (old, new)]
+    built = docmode.compare_context(entries, chunks, fake_embedding("q"), budget=24_000)
+    assert f"[only in old.txt] {old}" in built.context[1:]
+    assert f"[only in new.txt] {new}" in built.context[1:]
+
+
+def test_rag_compares_short_values_from_named_documents(tmp_path, mock_server_embedder):
+    path = tmp_path / "versions.duckdb"
+    write_duckdb_rows(path, [
+        {
+            "id": name,
+            "text": "\n".join([*SHARED, rate]),
+            "metadata": {"path": name},
+            "embedding": fake_embedding("rate"),
+        }
+        for name, rate in (("old.txt", "Rate: 10%"), ("new.txt", "Rate: 20%"))
+    ])
+    llm = _ScriptedLLM()
+    body = _ask(path, mock_server_embedder, llm, "Compare old.txt and new.txt")
+    assert body["mode"] == "compare"
+    assert "1 passages changed" in body["notice"]
+    assert any(
+        "Rate: 10%" in block and "Rate: 20%" in block
+        for block in llm.calls[0]["context"][1:]
+    )
+    assert {source["metadata"]["path"] for source in body["sources"]} == {
+        "old.txt", "new.txt"
+    }
+
+
 @pytest.mark.parametrize("old,new", [
     ("Balance is -100 dollars.", "Balance is − 100 dollars."),
     ("Balance is -100 dollars.", "Balance is –100 dollars."),

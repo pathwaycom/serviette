@@ -135,8 +135,8 @@ _CLOSE_NAME_MARGIN = 0.05
 # Two documents sharing at least this fraction of their lines are compared
 # as versions of one text (a diff); below it they are different documents.
 _VERSION_OVERLAP = 0.3
-# Lines shorter than this (after squashing) are not compared: codes and
-# table cells repeat throughout a document and say nothing on their own.
+# Only lines at least this long (after squashing) establish that documents
+# are versions of one text. Short values still participate in the diff.
 _MIN_LINE = 12
 # From this many lines on, a chunk's first and last line are taken to be cut
 # by the splitter and are not compared (shorter chunks are whole paragraphs).
@@ -685,8 +685,14 @@ class _Lines:
 
     def __init__(self, chunks: list[dict[str, Any]]) -> None:
         self.chunks = chunks
-        # squashed line -> index of the first chunk containing it
+        # Long lines establish version similarity and running headers;
+        # short values are kept separately for exact matching in the diff.
         self.lines: dict[str, int] = {}
+        self.short_lines: set[str] = set()
+        # Adjacent lines can be one line in another PDF extraction. Only
+        # spans containing a short line need this extra exact-match index.
+        self.short_contexts: dict[str, set[str]] = {}
+        self.joined_short_lines: set[str] = set()
         # per chunk: its lines as (squashed, raw), in order
         self.by_chunk: list[list[tuple[str, str]]] = []
         squashed_chunks = []
@@ -702,7 +708,44 @@ class _Lines:
             for squashed, _raw in rows:
                 if len(squashed) >= _MIN_LINE:
                     self.lines.setdefault(squashed, index)
+                elif squashed:
+                    self.short_lines.add(squashed)
+            nonempty = [squashed for squashed, _raw in rows if squashed]
+            for width in (2, 3):
+                for start in range(len(nonempty) - width + 1):
+                    span = nonempty[start : start + width]
+                    short = [line for line in span if len(line) < _MIN_LINE]
+                    if short:
+                        joined = "".join(span)
+                        self.joined_short_lines.add(joined)
+                        for line in short:
+                            self.short_contexts.setdefault(line, set()).add(joined)
             self.by_chunk.append(rows)
+        # Overlapping windows may end with a tiny chunk already covered by
+        # the previous window. Its cut-off first word is not a standalone
+        # short value. Check only short suffixes, keeping the work linear
+        # in the corpus size; do not confuse 100 with the suffix of 1100.
+        short_chunks: dict[str, set[int]] = {}
+        for index, text in enumerate(squashed_chunks):
+            if text and len(text) < _MIN_LINE:
+                short_chunks.setdefault(text, set()).add(index)
+        self.redundant_short_chunks: set[int] = set()
+        if short_chunks:
+            for covering_chunk, text in zip(chunks, squashed_chunks):
+                for size in range(1, min(len(text), _MIN_LINE)):
+                    suffix = text[-size:]
+                    if suffix[0].isdigit() and (
+                        text[-size - 1].isdigit() or text[-size - 1] in "+-.,"
+                    ):
+                        continue
+                    for index in short_chunks.get(suffix, ()):
+                        # Windows of one parsed document overlap verbatim.
+                        # Case/punctuation normalization alone is too weak
+                        # to establish that a chunk is redundant.
+                        raw = chunks[index]["text"].strip()
+                        covering = covering_chunk["text"].rstrip()
+                        if len(raw) < len(covering) and covering.endswith(raw):
+                            self.redundant_short_chunks.add(index)
         # The whole text, for finding a line that the other file wraps
         # differently (so it is no line of its own there).
         self.text = "\x00".join(squashed_chunks)
@@ -763,6 +806,21 @@ class _Lines:
             return False
 
         def present(squashed: str) -> bool:
+            if len(squashed) < _MIN_LINE:
+                # A short value must match a whole line: "100" inside
+                # "1100", or "On" inside another word, is not unchanged.
+                # Joining neighbouring lines also permits wrapping changes,
+                # but the resulting span must still match a whole line.
+                return (
+                    squashed in other.short_lines
+                    or squashed in other.joined_short_lines
+                    or any(
+                        context in other.lines
+                        or context in other.short_lines
+                        or context in other.joined_short_lines
+                        for context in self.short_contexts.get(squashed, ())
+                    )
+                )
             if squashed in other.lines:
                 return True
             mask = _DIGITS.sub("#", squashed)
@@ -780,10 +838,12 @@ class _Lines:
         reported: set[str] = set()
         passages: list[tuple[str, int]] = []
         for index, rows in enumerate(self.by_chunk):
+            if index in self.redundant_short_chunks:
+                continue
             run: list[str] = []
             for squashed, raw in [*rows, ("", "")]:
                 missing = False
-                if len(squashed) >= _MIN_LINE and squashed not in reported:
+                if squashed and squashed not in reported:
                     if squashed not in verdicts:
                         verdicts[squashed] = present(squashed)
                     missing = not verdicts[squashed]
